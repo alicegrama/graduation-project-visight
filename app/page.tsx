@@ -324,6 +324,7 @@ export default function Plugin() {
     transformedUrl: string;
   }[]>([]);
   const [configOpen, setConfigOpen] = useState(true);
+  const [elementDestinationMap, setElementDestinationMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const handler = (event: MessageEvent) => {
@@ -355,11 +356,16 @@ export default function Plugin() {
       figma.on("selectionchange", () => {
         const selected = figma.currentPage.selection;
         if (selected.length === 1 && selected[0].type === "FRAME") {
-          figma.ui.postMessage({
-            type: "FRAME_SELECTED",
-            nodeId: selected[0].id,
-            nodeName: selected[0].name,
-          });
+          const isTopLevel = figma.currentPage.children.some(
+            (child: any) => child.id === selected[0].id
+          );
+          if (isTopLevel) {
+            figma.ui.postMessage({
+              type: "FRAME_SELECTED",
+              nodeId: selected[0].id,
+              nodeName: selected[0].name,
+            });
+          }
         }
       });
     });
@@ -373,6 +379,7 @@ export default function Plugin() {
     setIsLoading(true);
     setResult(null);
     setTransformedPreviews([]);
+    setElementDestinationMap({});
     setStatus("");
     setLoadingStep("Exporting frames from Figma...");
     setLoadingProgress(0);
@@ -384,6 +391,7 @@ export default function Plugin() {
         const results: any[] = [];
         const visited = new Set<string>();
         let currentId: string | null = startNodeId;
+
         while (currentId && !visited.has(currentId)) {
           visited.add(currentId);
           const node = figma.getNodeById(currentId);
@@ -422,6 +430,7 @@ export default function Plugin() {
             interactiveElements,
             frameWidth: node.width,
             frameHeight: node.height,
+            previewOnly: false,
           });
           let nextId: string | null = null;
           for (const child of children) {
@@ -437,10 +446,47 @@ export default function Plugin() {
           }
           currentId = nextId;
         }
+
+        // Export destination frames not already in the walk sequence
+        const allDestIds: string[] = [];
+for (const result of results) {
+  for (const el of result.interactiveElements) {
+    if (el.destinationId && !results.find((r: any) => r.frameId === el.destinationId) && !allDestIds.includes(el.destinationId)) {
+      allDestIds.push(el.destinationId);
+    }
+  }
+}
+for (const destId of allDestIds) {
+          const destNode = figma.getNodeById(destId);
+          if (!destNode || destNode.type !== "FRAME") continue;
+          const destBytes = await destNode.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: 1 } });
+          results.push({
+            frameId: destNode.id,
+            frameName: destNode.name,
+            imageBytes: Array.from(destBytes),
+            interactiveElements: [],
+            frameWidth: destNode.width,
+            frameHeight: destNode.height,
+            previewOnly: true,
+          });
+        }
+
         return results;
       },
       { startNodeId: selectedFlow }
     );
+
+    // Build elementName → destinationFrameName map for client-side lookup
+    const elemDestMap: Record<string, string> = {};
+    exportedSteps.forEach((s: any) => {
+      s.interactiveElements.forEach((el: any) => {
+        if (el.destinationId) {
+          const dest = exportedSteps.find((f: any) => f.frameId === el.destinationId);
+          if (dest) elemDestMap[el.name] = dest.frameName;
+        }
+      });
+    });
+    setElementDestinationMap(elemDestMap);
 
     setLoadingTotal(exportedSteps.length);
     setLoadingProgress(0);
@@ -470,11 +516,17 @@ export default function Plugin() {
           position: getPositionLabel(el.x, el.y, step.frameWidth, step.frameHeight),
           destinationId: el.destinationId,
         }));
-        stepsWithTransformed.push({
-          frameName: step.frameName,
-          transformedImageBase64: transformedBase64,
-          interactiveElements: elementsWithPositions,
-        });
+
+        // Only send non-preview frames to the VLM
+        if (!step.previewOnly) {
+          stepsWithTransformed.push({
+            frameName: step.frameName,
+            transformedImageBase64: transformedBase64,
+            interactiveElements: elementsWithPositions,
+          });
+        }
+
+        // Always store preview for display
         setTransformedPreviews(prev => [...prev, {
           frameName: step.frameName,
           originalUrl: URL.createObjectURL(blob),
@@ -732,6 +784,34 @@ export default function Plugin() {
                           <div>
                             <p style={s.stepReasoning}>{step.reasoning}</p>
                             <div style={s.stepChoice}>→ {step.choice}</div>
+
+                            {/* Destination frame card — shown on completed steps */}
+                            {step.outcome === "completed" && (() => {
+                              const destFrameName = elementDestinationMap[step.choice];
+                              const destinationPreview = destFrameName
+                                ? transformedPreviews.find(p => p.frameName === destFrameName)
+                                : null;
+                              if (!destinationPreview) return null;
+                              return (
+                                <div style={{
+                                  marginTop: "10px",
+                                  padding: "8px",
+                                  background: "#f0fdf4",
+                                  border: "1px solid #bbf7d0",
+                                  borderRadius: "5px",
+                                }}>
+                                  <div style={{ fontSize: "10px", fontWeight: 600, color: "#166534", marginBottom: "6px", textTransform: "uppercase" as const, letterSpacing: "0.05em" }}>
+                                    ✓ Arrived at: {destFrameName}
+                                  </div>
+                                  <img
+                                    src={destinationPreview.transformedUrl}
+                                    alt={destFrameName}
+                                    style={{ width: "60%", borderRadius: "4px", border: "1px solid #bbf7d0", display: "block", margin: "0 auto" }}
+                                  />
+                                </div>
+                              );
+                            })()}
+
                             {step.detectedButNotWired && step.detectedButNotWired.length > 0 && (
                               <div style={s.warningOrange}>
                                 <span style={{ fontWeight: 600 }}>Visible but unwired: </span>
