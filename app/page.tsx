@@ -14,6 +14,11 @@ const CONDITIONS = [
   { value: "glaucoma", label: "Glaucoma" },
   { value: "low_vision", label: "Low Vision" },
   { value: "macular_degeneration", label: "Macular Degeneration" },
+  { value: "hyperopia", label: "Hyperopia (refractive blur)" },
+  { value: "contrast_sensitivity", label: "Contrast Sensitivity Loss" },
+  { value: "double_vision", label: "Double Vision (diplopia)" },
+  { value: "glare", label: "Glare / Photophobia" },
+  { value: "detail_loss", label: "Detail Loss (pixelation)" },
 ];
 
 const PERSONAS = [
@@ -326,20 +331,23 @@ export default function Plugin() {
   const [configOpen, setConfigOpen] = useState(true);
   const [elementDestinationMap, setElementDestinationMap] = useState<Record<string, string>>({});
 
-  useEffect(() => {
-    const handler = (event: MessageEvent) => {
-      if (event.data?.pluginMessage?.type === "FRAME_SELECTED") {
-        const { nodeId, nodeName } = event.data.pluginMessage;
-        setSelectedFlow(nodeId);
-        setFlows(prev => {
-          if (prev.find(f => f.startNodeId === nodeId)) return prev;
-          return [...prev, { name: nodeName, startNodeId: nodeId }];
-        });
-      }
-    };
-    window.addEventListener("message", handler);
-    return () => window.removeEventListener("message", handler);
-  }, []);
+useEffect(() => {
+  const handler = (event: any) => {
+    if (event.data?.pluginMessage?.type === "DEBUG_REACTIONS") {
+      console.log("Reactions on", event.data.pluginMessage.frame, JSON.stringify(event.data.pluginMessage.data, null, 2));
+    }
+    if (event.data?.pluginMessage?.type === "FRAME_SELECTED") {
+      const { nodeId, nodeName } = event.data.pluginMessage;
+      setSelectedFlow(nodeId);
+      setFlows((prev: any) => {
+        if (prev.find((f: any) => f.startNodeId === nodeId)) return prev;
+        return [...prev, { name: nodeName, startNodeId: nodeId }];
+      });
+    }
+  };
+  window.addEventListener("message", handler);
+  return () => window.removeEventListener("message", handler);
+}, []);
 
   const loadFlows = async () => {
     setStatus("");
@@ -400,6 +408,18 @@ export default function Plugin() {
           const interactiveElements: any[] = [];
           let elementIndex = 1;
           const children = node.findAll(() => true);
+          // TEMP DEBUG - log all nodes with reactions on this frame
+const allReactions = children
+  .filter((child: any) => "reactions" in child && (child as any).reactions.length > 0)
+  .map((child: any) => ({
+    name: child.name,
+    type: child.type,
+    reactions: (child as any).reactions.map((r: any) => ({
+      type: r.action?.type,
+      destinationId: r.action?.destinationId,
+    }))
+  }));
+figma.ui.postMessage({ type: "DEBUG_REACTIONS", data: allReactions, frame: node.name });
           for (const child of children) {
             if ("reactions" in child && (child as any).reactions.length > 0) {
               const navigatingReactions = (child as any).reactions.filter(
@@ -432,19 +452,30 @@ export default function Plugin() {
             frameHeight: node.height,
             previewOnly: false,
           });
-          let nextId: string | null = null;
-          for (const child of children) {
-            if ("reactions" in child) {
-              for (const reaction of (child as any).reactions) {
-                if (reaction.action?.type === "NODE" && reaction.action?.destinationId) {
-                  nextId = reaction.action.destinationId;
-                  break;
-                }
-              }
-            }
-            if (nextId) break;
-          }
-          currentId = nextId;
+          // Prefer unvisited destinations, prioritising nav elements over content elements
+let nextId: string | null = null;
+let contentNextId: string | null = null;
+
+for (const child of children) {
+  if ("reactions" in child) {
+    for (const reaction of (child as any).reactions) {
+      if (reaction.action?.type === "NODE" && reaction.action?.destinationId) {
+        const destId = reaction.action.destinationId;
+        if (visited.has(destId)) continue;
+        const name = (child.name || "").toLowerCase();
+        // Deprioritise content cards, prioritise nav/button elements
+        const isContentCard = name.includes("card") || name.includes("drag") || name.includes("overlay");
+        if (isContentCard && !contentNextId) {
+          contentNextId = destId;
+        } else if (!isContentCard && !nextId) {
+          nextId = destId;
+        }
+      }
+    }
+  }
+}
+
+currentId = nextId ?? contentNextId;
         }
 
         // Export destination frames not already in the walk sequence

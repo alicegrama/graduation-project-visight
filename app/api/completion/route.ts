@@ -44,6 +44,11 @@ const CONDITION_DESCRIPTIONS: Record<string, string> = {
   glaucoma: "tunnel vision with peripheral vision loss, only central vision remains",
   low_vision: "general low vision with blurred sight and reduced contrast sensitivity",
   macular_degeneration: "central vision loss with a blind spot in the center of the visual field",
+  hyperopia: "refractive error causing blurred near or distant vision due to inability to focus",
+  contrast_sensitivity: "reduced ability to distinguish between similar shades, causing low-contrast elements to appear invisible",
+  double_vision: "diplopia causing objects to appear duplicated side by side",
+  glare: "light sensitivity causing bright areas to bloom and bleed, making high-contrast interfaces painful and unreadable",
+  detail_loss: "loss of fine visual detail causing the world to appear pixelated or clustered",
 };
 
 async function detectVisualElements(
@@ -207,12 +212,16 @@ TASK:
 ${persona.name} is trying to: "${task}"
 
 RULES:
-- You must choose ONE interactive element to tap, OR decide to abandon.
-- Choose abandon if: you cannot confidently identify any useful tap target, or if the current screen is too confusing or inaccessible to proceed.
-- Choose cannot_find_target if: you can identify what you want to tap but it does not appear in the interactive elements list.
-- You have a maximum of 10 steps total. If the goal seems unreachable, abandon.
-- If the element you are tapping IS the destination that completes the task (e.g. tapping "Rewards" when the task is "go to rewards page"), set outcome to "completed" immediately — do not wait to see the next screen.
-- If you have successfully navigated to a screen that fulfills the task goal, set outcome to "completed".
+- You must ALWAYS choose ONE interactive element to tap. Real users do not give up easily.
+- Choose abandon ONLY as a last resort: if you have already tried multiple elements and made no progress, OR if the screen is completely black or blank with nothing perceivable at all.
+- A real user with a visual impairment will make their best guess even when uncertain. Low confidence is not a reason to abandon — it is a reason to guess.
+- If you cannot clearly read a label, tap whatever element seems most likely based on its position, shape, or partial visibility.
+- Choose cannot_find_target if: you can describe what you want to tap but it genuinely does not appear anywhere in the interactive elements list.
+- You have a maximum of 10 steps. Only abandon if you have been going in circles with no progress for several steps.
+- Set outcome to "completed" ONLY if the screen you are CURRENTLY LOOKING AT right now visually matches the task goal. Do not complete based on what you expect to see after tapping — only based on what you can see right now.
+- You cannot declare completion because you tapped something that should lead to the goal. You must actually be on the goal screen already to declare completion.
+- If the task is "navigate to the Activity page" and you are currently looking at the Exercise page, the task is NOT complete — keep navigating.
+- When unsure whether the current screen matches the goal, choose "continue".
 - Do not continue navigating after the goal is achieved.
 - Respond ONLY with valid JSON. No explanation outside the JSON.
 
