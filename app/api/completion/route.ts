@@ -162,6 +162,7 @@ async function runTraversalStep(
   severity: number,
   task: string,
   stepNumber: number,
+  frameName: string,
   history: string[],
   screenDescription: string,
   detectedButNotWired: string[],
@@ -186,8 +187,8 @@ async function runTraversalStep(
       ? `⚠ ${persona.name} can see these elements but they lead nowhere (dead ends): ${detectedButNotWired.join(", ")}`
       : "",
     wiredButNotDetected.length > 0
-      ? `⚠ These elements are interactive but ${persona.name} may not be able to perceive them: ${wiredButNotDetected.map(e => e.name).join(", ")}`
-      : "",
+  ? `⚠ ${wiredButNotDetected.length} interactive element(s) exist on this screen but are not visible to ${persona.name} due to their visual condition. ${persona.name} cannot use these elements.`
+  : "",
   ].filter(Boolean).join("\n");
 
   const historyText = history.length > 0
@@ -220,9 +221,12 @@ RULES:
 - You have a maximum of 10 steps. Only abandon if you have been going in circles with no progress for several steps.
 - Set outcome to "completed" ONLY if the screen you are CURRENTLY LOOKING AT right now visually matches the task goal. Do not complete based on what you expect to see after tapping — only based on what you can see right now.
 - You cannot declare completion because you tapped something that should lead to the goal. You must actually be on the goal screen already to declare completion.
-- If the task is "navigate to the Activity page" and you are currently looking at the Exercise page, the task is NOT complete — keep navigating.
+- You are currently on the screen named at the top of this prompt. Do not tap elements that lead back to the screen you are already on.
+- The journey history shows where you have already been. Do not navigate to already-visited screens unless there is no other option.
+- If an element is listed as wired but imperceptible, treat it as if it does not exist. Do not tap it, do not reference it, do not infer its position from prior knowledge. You can only interact with elements you can actually perceive in the image.
 - When unsure whether the current screen matches the goal, choose "continue".
 - Do not continue navigating after the goal is achieved.
+
 - Respond ONLY with valid JSON. No explanation outside the JSON.
 
 RESPONSE FORMAT:
@@ -233,14 +237,17 @@ RESPONSE FORMAT:
   "outcome": "<continue | completed | abandon | cannot_find_target>"
 }`;
 
-  const userPrompt = `This is step ${stepNumber} of your navigation.${historyText}
+const userPrompt = `This is step ${stepNumber} of your navigation.${historyText}
 
-What ${persona.name} perceives on this screen: ${screenDescription}
+Current screen: "${frameName}"
+What ${persona.name} perceives: ${screenDescription}
 
 Interactive elements ${persona.name} can both see AND tap:
 ${elementsText}
 
 ${crossRefContext}
+
+Important: ${persona.name} is currently ON "${frameName}". Do not tap elements that navigate back to the current screen or to already-visited screens. Choose the element most likely to move toward the task goal.
 
 What does ${persona.name} do?`;
 
@@ -396,18 +403,19 @@ export async function POST(req: NextRequest) {
       }
 
       const result = await runTraversalStep(
-        step.transformedImageBase64,
-        matched.map((m: any) => m.wired),
-        persona,
-        condition,
-        severity,
-        task,
-        stepNumber,
-        history,
-        screenDescription,
-        detectedButNotWired,
-        wiredButNotDetected
-      );
+  step.transformedImageBase64,
+  matched.map((m: any) => m.wired),
+  persona,
+  condition,
+  severity,
+  task,
+  stepNumber,
+  step.frameName,
+  history,
+  screenDescription,
+  detectedButNotWired,
+  wiredButNotDetected
+);
 
       const chosenElement = result.choice !== null
         ? step.interactiveElements.find((el: any) => el.index === result.choice)
