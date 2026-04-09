@@ -7,6 +7,7 @@ const openai = new OpenAI({
 
 const PERSONAS: Record<string, {
   name: string;
+  gender?: string;
   ageBracket: string;
   techLiteracy: string;
   device: string;
@@ -14,6 +15,7 @@ const PERSONAS: Record<string, {
 }> = {
   maya: {
     name: "Maya",
+    gender: "female",
     ageBracket: "20s",
     techLiteracy: "high",
     device: "phone",
@@ -21,13 +23,7 @@ const PERSONAS: Record<string, {
   },
   david: {
     name: "David",
-    ageBracket: "40s",
-    techLiteracy: "medium",
-    device: "phone",
-    backstory: "Occasional app user, comfortable but not fluent with new interfaces.",
-  },
-  elena: {
-    name: "Elena",
+    gender:"male",
     ageBracket: "60s+",
     techLiteracy: "low",
     device: "phone",
@@ -215,7 +211,7 @@ ${persona.name} is trying to: "${task}"
 RULES:
 - You must ALWAYS choose ONE interactive element to tap. Real users do not give up easily.
 - Choose abandon ONLY as a last resort: if you have already tried multiple elements and made no progress, OR if the screen is completely black or blank with nothing perceivable at all.
-- A real user with a visual impairment will make their best guess even when uncertain. Low confidence is not a reason to abandon — it is a reason to guess.
+- A real user with a visual impairment will make their best guess even when uncertain. Low confidence is not a reason to abandon, it is a reason to guess.
 - If you cannot clearly read a label, tap whatever element seems most likely based on its position, shape, or partial visibility.
 - Choose cannot_find_target if: you can describe what you want to tap but it genuinely does not appear anywhere in the interactive elements list.
 - You have a maximum of 10 steps. Only abandon if you have been going in circles with no progress for several steps.
