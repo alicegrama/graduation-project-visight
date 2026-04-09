@@ -318,7 +318,7 @@ async function generateNarrative(
     dropout: `${persona.name} abandoned the task due to excessive friction or confusion.`,
   }[finalOutcome];
 
-  const prompt = `You are writing a UX accessibility evaluation report for a designer.
+  const prompt = `You are an accessibility expert writing a structured evaluation report for a UI/UX designer.
 
 A simulated user navigated a UI prototype. Here is their profile and what happened:
 
@@ -330,20 +330,34 @@ FINAL OUTCOME: ${outcomeText}
 NAVIGATION TRACE:
 ${traceText}
 
-Write a clear, human narrative (4–6 paragraphs) in second person addressed to the designer.
-- Describe what ${persona.name} experienced at each key moment
-- Be specific about which visual or interaction failures caused problems
-- End with 3 prioritized, actionable recommendations
-- Write for a designer audience, not a technical one
-- Do NOT use bullet points for the main narrative, only for the final recommendations`;
+Return a JSON object with this exact structure. No markdown, no code fences, just raw JSON:
+{
+  "summary": "2-3 sentence overview of what the simulated user experienced and the overall accessibility outcome",
+  "outcome": "${finalOutcome}",
+  "issues": [
+    {
+      "severity": "critical" | "major" | "minor",
+      "screen": "name of the screen where the issue occurred",
+      "issue": "concise description of the accessibility problem (1-2 sentences)",
+      "recommendation": "specific actionable fix the designer can implement (1-2 sentences)"
+    }
+  ]
+}
+
+Severity guide:
+- critical: blocked the user from completing the task entirely
+- major: caused significant confusion, wrong navigation, or multiple failed attempts  
+- minor: caused hesitation or uncertainty but did not prevent task completion
+
+Identify between 2 and 6 issues. Focus on issues caused by the visual condition, not general UX problems. Each issue must reference a specific screen from the navigation trace.`;
 
   const response = await openai.chat.completions.create({
     model: "gpt-4o",
-    max_tokens: 1000,
+    max_tokens: 1200,
     messages: [{ role: "user", content: prompt }],
   });
 
-  return response.choices[0].message.content ?? "Could not generate narrative.";
+  return response.choices[0].message.content ?? "{}";
 }
 
 export async function POST(req: NextRequest) {

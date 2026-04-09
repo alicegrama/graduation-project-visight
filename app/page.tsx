@@ -41,12 +41,26 @@ type SessionStep = {
   wiredButNotDetected?: string[];
 };
 
+type AccessibilityIssue = {
+  severity: "critical" | "major" | "minor";
+  screen: string;
+  issue: string;
+  recommendation: string;
+};
+
+type NarrativeReport = {
+  summary: string;
+  outcome: string;
+  issues: AccessibilityIssue[];
+};
+
 type SimulationResult = {
   sessionTrace: SessionStep[];
   finalOutcome: "completion" | "failure" | "dropout";
   stoppedAtStep: number;
   narrative: string;
   personaName: string;
+  parsedReport?: NarrativeReport;
 };
 
 function getPositionLabel(x: number, y: number, frameWidth: number, frameHeight: number): string {
@@ -331,30 +345,37 @@ export default function Plugin() {
   const [configOpen, setConfigOpen] = useState(true);
   const [elementDestinationMap, setElementDestinationMap] = useState<Record<string, string>>({});
 
-useEffect(() => {
-  const handler = (event: any) => {
-    if (event.data?.pluginMessage?.type === "DEBUG_REACTIONS") {
-      console.log("Reactions on", event.data.pluginMessage.frame, JSON.stringify(event.data.pluginMessage.data, null, 2));
-    }
-    if (event.data?.pluginMessage?.type === "FRAME_SELECTED") {
-      const { nodeId, nodeName } = event.data.pluginMessage;
-      setSelectedFlow(nodeId);
-      setFlows((prev: any) => {
-        if (prev.find((f: any) => f.startNodeId === nodeId)) return prev;
-        return [...prev, { name: nodeName, startNodeId: nodeId }];
-      });
-    }
-  };
-  window.addEventListener("message", handler);
-  return () => window.removeEventListener("message", handler);
-}, []);
+  useEffect(() => {
+    const handler = (event: any) => {
+      if (event.data?.pluginMessage?.type === "FRAME_SELECTED") {
+        const { nodeId, nodeName } = event.data.pluginMessage;
+        setSelectedFlow(nodeId);
+        setFlows((prev: any) => {
+          if (prev.find((f: any) => f.startNodeId === nodeId)) return prev;
+          return [...prev, { name: nodeName, startNodeId: nodeId }];
+        });
+      }
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, []);
 
   const loadFlows = async () => {
     setStatus("");
     const found = await figmaAPI.run(async (figma) => {
-      return figma.currentPage.children
-        .filter((n: any) => n.type === "FRAME")
-        .map((n: any) => ({ name: n.name, startNodeId: n.id }));
+      const frames: any[] = [];
+      for (const node of figma.currentPage.children) {
+        if (node.type === "FRAME") {
+          frames.push({ name: node.name, startNodeId: node.id });
+        } else if (node.type === "SECTION") {
+          for (const child of (node as any).children) {
+            if (child.type === "FRAME") {
+              frames.push({ name: child.name, startNodeId: child.id });
+            }
+          }
+        }
+      }
+      return frames;
     });
     if (!found.length) { setStatus("No frames found on this page."); return; }
     setFlows(found);
@@ -365,7 +386,10 @@ useEffect(() => {
         const selected = figma.currentPage.selection;
         if (selected.length === 1 && selected[0].type === "FRAME") {
           const isTopLevel = figma.currentPage.children.some(
-            (child: any) => child.id === selected[0].id
+            (child: any) =>
+              child.id === selected[0].id ||
+              (child.type === "SECTION" &&
+                (child as any).children?.some((c: any) => c.id === selected[0].id))
           );
           if (isTopLevel) {
             figma.ui.postMessage({
@@ -408,18 +432,7 @@ useEffect(() => {
           const interactiveElements: any[] = [];
           let elementIndex = 1;
           const children = node.findAll(() => true);
-          // TEMP DEBUG - log all nodes with reactions on this frame
-const allReactions = children
-  .filter((child: any) => "reactions" in child && (child as any).reactions.length > 0)
-  .map((child: any) => ({
-    name: child.name,
-    type: child.type,
-    reactions: (child as any).reactions.map((r: any) => ({
-      type: r.action?.type,
-      destinationId: r.action?.destinationId,
-    }))
-  }));
-figma.ui.postMessage({ type: "DEBUG_REACTIONS", data: allReactions, frame: node.name });
+
           for (const child of children) {
             if ("reactions" in child && (child as any).reactions.length > 0) {
               const navigatingReactions = (child as any).reactions.filter(
@@ -443,6 +456,7 @@ figma.ui.postMessage({ type: "DEBUG_REACTIONS", data: allReactions, frame: node.
               }
             }
           }
+
           results.push({
             frameId: node.id,
             frameName: node.name,
@@ -452,42 +466,42 @@ figma.ui.postMessage({ type: "DEBUG_REACTIONS", data: allReactions, frame: node.
             frameHeight: node.height,
             previewOnly: false,
           });
+
           // Prefer unvisited destinations, prioritising nav elements over content elements
-let nextId: string | null = null;
-let contentNextId: string | null = null;
+          let nextId: string | null = null;
+          let contentNextId: string | null = null;
 
-for (const child of children) {
-  if ("reactions" in child) {
-    for (const reaction of (child as any).reactions) {
-      if (reaction.action?.type === "NODE" && reaction.action?.destinationId) {
-        const destId = reaction.action.destinationId;
-        if (visited.has(destId)) continue;
-        const name = (child.name || "").toLowerCase();
-        // Deprioritise content cards, prioritise nav/button elements
-        const isContentCard = name.includes("card") || name.includes("drag") || name.includes("overlay");
-        if (isContentCard && !contentNextId) {
-          contentNextId = destId;
-        } else if (!isContentCard && !nextId) {
-          nextId = destId;
-        }
-      }
-    }
-  }
-}
+          for (const child of children) {
+            if ("reactions" in child) {
+              for (const reaction of (child as any).reactions) {
+                if (reaction.action?.type === "NODE" && reaction.action?.destinationId) {
+                  const destId = reaction.action.destinationId;
+                  if (visited.has(destId)) continue;
+                  const name = (child.name || "").toLowerCase();
+                  const isContentCard = name.includes("card") || name.includes("drag") || name.includes("overlay");
+                  if (isContentCard && !contentNextId) {
+                    contentNextId = destId;
+                  } else if (!isContentCard && !nextId) {
+                    nextId = destId;
+                  }
+                }
+              }
+            }
+          }
 
-currentId = nextId ?? contentNextId;
+          currentId = nextId ?? contentNextId;
         }
 
         // Export destination frames not already in the walk sequence
         const allDestIds: string[] = [];
-for (const result of results) {
-  for (const el of result.interactiveElements) {
-    if (el.destinationId && !results.find((r: any) => r.frameId === el.destinationId) && !allDestIds.includes(el.destinationId)) {
-      allDestIds.push(el.destinationId);
-    }
-  }
-}
-for (const destId of allDestIds) {
+        for (const result of results) {
+          for (const el of result.interactiveElements) {
+            if (el.destinationId && !results.find((r: any) => r.frameId === el.destinationId) && !allDestIds.includes(el.destinationId)) {
+              allDestIds.push(el.destinationId);
+            }
+          }
+        }
+        for (const destId of allDestIds) {
           const destNode = figma.getNodeById(destId);
           if (!destNode || destNode.type !== "FRAME") continue;
           const destBytes = await destNode.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: 1 } });
@@ -548,7 +562,6 @@ for (const destId of allDestIds) {
           destinationId: el.destinationId,
         }));
 
-        // Only send non-preview frames to the VLM
         if (!step.previewOnly) {
           stepsWithTransformed.push({
             frameName: step.frameName,
@@ -557,7 +570,6 @@ for (const destId of allDestIds) {
           });
         }
 
-        // Always store preview for display
         setTransformedPreviews(prev => [...prev, {
           frameName: step.frameName,
           originalUrl: URL.createObjectURL(blob),
@@ -589,6 +601,12 @@ for (const destId of allDestIds) {
       });
       if (!response.ok) throw new Error(`API error: ${response.status}`);
       const data: SimulationResult = await response.json();
+      try {
+        const cleaned = data.narrative.replace(/```json|```/g, "").trim();
+        data.parsedReport = JSON.parse(cleaned);
+      } catch {
+        data.parsedReport = undefined;
+      }
       setResult(data);
       setLoadingStep("");
     } catch (err) {
@@ -780,9 +798,94 @@ for (const destId of allDestIds) {
                 ))}
               </div>
 
-              {activeTab === "narrative" && (
-                <div style={s.narrative}>{result.narrative}</div>
-              )}
+              {activeTab === "narrative" && (() => {
+                const report = result.parsedReport;
+
+                const severityConfig = {
+                  critical: { color: "#991b1b", bg: "#fef2f2", border: "#fecaca", label: "Critical" },
+                  major:    { color: "#92400e", bg: "#fff7ed", border: "#fed7aa", label: "Major" },
+                  minor:    { color: "#713f12", bg: "#fefce8", border: "#fef08a", label: "Minor" },
+                };
+
+                if (!report) {
+                  return <div style={s.narrative}>{result.narrative}</div>;
+                }
+
+                return (
+                  <div>
+                    <div style={{
+                      padding: "12px 14px",
+                      background: "#f9f9f9",
+                      border: "1px solid #e5e5e5",
+                      borderRadius: "6px",
+                      marginBottom: "16px",
+                    }}>
+                      <div style={{ fontSize: "10px", fontWeight: 600, color: "#999", textTransform: "uppercase" as const, letterSpacing: "0.06em", marginBottom: "6px" }}>
+                        Summary
+                      </div>
+                      <p style={{ fontSize: "12px", lineHeight: "1.75", color: "#333", margin: 0 }}>
+                        {report.summary}
+                      </p>
+                    </div>
+
+                    <div style={{ fontSize: "11px", fontWeight: 600, color: "#111", marginBottom: "10px" }}>
+                      {report.issues.length} issue{report.issues.length !== 1 ? "s" : ""} found
+                    </div>
+
+                    {report.issues.map((issue, i) => {
+                      const sc = severityConfig[issue.severity] ?? severityConfig.minor;
+                      return (
+                        <div key={i} style={{
+                          border: `1px solid ${sc.border}`,
+                          borderRadius: "6px",
+                          marginBottom: "10px",
+                          overflow: "hidden",
+                        }}>
+                          <div style={{
+                            background: sc.bg,
+                            padding: "8px 12px",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            borderBottom: `1px solid ${sc.border}`,
+                          }}>
+                            <span style={{
+                              fontSize: "10px",
+                              fontWeight: 700,
+                              color: sc.color,
+                              textTransform: "uppercase" as const,
+                              letterSpacing: "0.08em",
+                            }}>
+                              {sc.label}
+                            </span>
+                            <span style={{ fontSize: "10px", color: "#999", fontWeight: 500 }}>
+                              {issue.screen}
+                            </span>
+                          </div>
+                          <div style={{ padding: "10px 12px" }}>
+                            <p style={{ fontSize: "12px", lineHeight: "1.65", color: "#222", margin: "0 0 8px 0" }}>
+                              {issue.issue}
+                            </p>
+                            <div style={{
+                              padding: "7px 10px",
+                              background: "#f9f9f9",
+                              borderRadius: "4px",
+                              borderLeft: "3px solid #e5e5e5",
+                            }}>
+                              <div style={{ fontSize: "10px", fontWeight: 600, color: "#999", textTransform: "uppercase" as const, letterSpacing: "0.06em", marginBottom: "4px" }}>
+                                Recommendation
+                              </div>
+                              <p style={{ fontSize: "11px", lineHeight: "1.65", color: "#444", margin: 0 }}>
+                                {issue.recommendation}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
 
               {activeTab === "trace" && (
                 <div>
@@ -816,7 +919,6 @@ for (const destId of allDestIds) {
                             <p style={s.stepReasoning}>{step.reasoning}</p>
                             <div style={s.stepChoice}>→ {step.choice}</div>
 
-                            {/* Destination frame card — shown on completed steps */}
                             {step.outcome === "completed" && (() => {
                               const destFrameName = elementDestinationMap[step.choice];
                               const destinationPreview = destFrameName
@@ -863,31 +965,6 @@ for (const destId of allDestIds) {
                   })}
                 </div>
               )}
-
-              {/* Previews — commented out, re-enable for debugging
-              {activeTab === "previews" && (
-                <div>
-                  {transformedPreviews.length === 0
-                    ? <p style={{ color: "#aaa", fontSize: "11px" }}>No previews available.</p>
-                    : transformedPreviews.map((preview, i) => (
-                      <div key={i} style={s.previewFrame}>
-                        <div style={s.previewLabel}>{preview.frameName}</div>
-                        <div style={s.grid2}>
-                          <div>
-                            <div style={s.previewSubLabel}>Original</div>
-                            <img src={preview.originalUrl} alt="original" style={s.previewImg} />
-                          </div>
-                          <div>
-                            <div style={s.previewSubLabel}>{CONDITIONS.find(c => c.value === condition)?.label}</div>
-                            <img src={preview.transformedUrl} alt="transformed" style={s.previewImg} />
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                  }
-                </div>
-              )}
-              */}
             </div>
           );
         })()}
