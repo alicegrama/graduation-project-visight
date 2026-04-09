@@ -562,13 +562,12 @@ export default function Plugin() {
           destinationId: el.destinationId,
         }));
 
-        if (!step.previewOnly) {
-          stepsWithTransformed.push({
-            frameName: step.frameName,
-            transformedImageBase64: transformedBase64,
-            interactiveElements: elementsWithPositions,
-          });
-        }
+        stepsWithTransformed.push({
+          frameId: step.frameId,
+          frameName: step.frameName,
+          transformedImageBase64: transformedBase64,
+          interactiveElements: elementsWithPositions,
+        });
 
         setTransformedPreviews(prev => [...prev, {
           frameName: step.frameName,

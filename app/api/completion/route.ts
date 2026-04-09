@@ -379,13 +379,14 @@ export async function POST(req: NextRequest) {
     }[] = [];
 
     const history: string[] = [];
+    const MAX_STEPS = 10;
+    const frameMap = new Map<string, any>(steps.map((s: any) => [s.frameId, s]));
+    let currentStep = steps[0];
     let finalOutcome: "completion" | "failure" | "dropout" = "dropout";
-    let stoppedAtStep = steps.length;
+    let stoppedAtStep = 0;
 
-    for (let i = 0; i < steps.length; i++) {
-      const step = steps[i];
-      const stepNumber = i + 1;
-      const isLastStep = i === steps.length - 1;
+    for (let stepNumber = 1; stepNumber <= MAX_STEPS; stepNumber++) {
+      const step = currentStep;
 
       const { detectedElements, screenDescription } = await detectVisualElements(
         step.transformedImageBase64,
@@ -469,9 +470,15 @@ export async function POST(req: NextRequest) {
         break;
       }
 
-      if (isLastStep) {
-        finalOutcome = "completion";
+      // Dynamic navigation: follow the chosen button's actual wiring
+      const nextFrameId = chosenElement?.destinationId;
+      const nextStep = nextFrameId ? frameMap.get(nextFrameId) : null;
+      if (!nextStep) {
+        finalOutcome = "failure";
+        stoppedAtStep = stepNumber;
+        break;
       }
+      currentStep = nextStep;
     }
 
     const narrative = await generateNarrative(
