@@ -7,7 +7,7 @@ const openai = new OpenAI({
 
 const PERSONAS: Record<string, {
   name: string;
-  gender?: string;
+  gender: string;
   ageBracket: string;
   techLiteracy: string;
   device: string;
@@ -23,8 +23,8 @@ const PERSONAS: Record<string, {
   },
   david: {
     name: "David",
-    gender:"male",
-    ageBracket: "60s+",
+    gender: "male",
+    ageBracket: "60s",
     techLiteracy: "low",
     device: "phone",
     backstory: "Rarely uses apps, prefers desktop or in-person. Takes time to read everything carefully.",
@@ -217,8 +217,6 @@ RULES:
 - You have a maximum of 10 steps. Only abandon if you have been going in circles with no progress for several steps.
 - Set outcome to "completed" ONLY if the screen you are CURRENTLY LOOKING AT right now visually matches the task goal. Do not complete based on what you expect to see after tapping — only based on what you can see right now.
 - You cannot declare completion because you tapped something that should lead to the goal. You must actually be on the goal screen already to declare completion.
-- You are currently on the screen named at the top of this prompt. Do not tap elements that lead back to the screen you are already on.
-- The journey history shows where you have already been. Do not navigate to already-visited screens unless there is no other option.
 - If an element is listed as wired but imperceptible, treat it as if it does not exist. Do not tap it, do not reference it, do not infer its position from prior knowledge. You can only interact with elements you can actually perceive in the image.
 - When unsure whether the current screen matches the goal, choose "continue".
 - Do not continue navigating after the goal is achieved.

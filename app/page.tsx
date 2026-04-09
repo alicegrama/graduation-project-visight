@@ -22,9 +22,8 @@ const CONDITIONS = [
 ];
 
 const PERSONAS = [
-  { value: "maya", label: "Maya — 20s, high tech literacy, phone" },
-  { value: "david", label: "David — 40s, medium tech literacy, tablet" },
-  { value: "elena", label: "Elena — 60s+, low tech literacy, small phone" },
+  { value: "maya", label: "Maya — Female, 20s, High tech literacy, Phone" },
+  { value: "david", label: "David — Male, 60s, Low tech literacy, Phone" },
 ];
 
 type Flow = { name: string; startNodeId: string };
