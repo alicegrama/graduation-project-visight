@@ -202,8 +202,9 @@ PERSONA:
 
 VISUAL CONDITION:
 - ${persona.name} has ${severityLabel} ${conditionDescription}.
-- The image you are seeing has already been visually transformed to simulate this condition.
-- Reason about what ${persona.name} can and cannot perceive given both the transformed image AND the condition description.
+- Severity level: ${Math.round(severity * 100)}%. At low severity (under 30%), the visual impairment has minimal effect and the user can see the screen almost normally. At moderate severity (30-70%), some elements may be harder to perceive. At high severity (above 70%), significant parts of the screen may be imperceptible.
+- The image you are seeing has already been visually transformed to simulate this exact severity level. Trust what you can see in the image — do not assume impairment beyond what is visible in the transformed image.
+- Reason about what ${persona.name} can and cannot perceive based PRIMARILY on the transformed image, not on assumptions about the condition.
 
 TASK:
 ${persona.name} is trying to: "${task}"
