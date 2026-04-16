@@ -1,7 +1,8 @@
 "use client";
 
 import { figmaAPI } from "@/lib/figmaAPI";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import html2canvas from "html2canvas";
 
 const SERVER_URL = "http://127.0.0.1:5001";
 
@@ -341,6 +342,7 @@ export default function Plugin() {
     originalUrl: string;
     transformedUrl: string;
   }[]>([]);
+  const resultRef = useRef<HTMLDivElement>(null);
   const [configOpen, setConfigOpen] = useState(true);
   const [elementDestinationMap, setElementDestinationMap] = useState<Record<string, string>>({});
 
@@ -615,6 +617,30 @@ export default function Plugin() {
     setIsLoading(false);
   };
 
+  const exportAsJpeg = async (filename: string) => {
+  if (!resultRef.current) return;
+  try {
+    const canvas = await html2canvas(resultRef.current, {
+      backgroundColor: "#ffffff",
+      scale: 2,
+      useCORS: true,
+      logging: false,
+      onclone: (clonedDoc, clonedElement) => {
+        // Add consistent padding to the cloned element without touching the live DOM
+        clonedElement.style.padding = "16px";
+        clonedElement.style.boxSizing = "border-box";
+      },
+    });
+
+    const link = document.createElement("a");
+    link.download = filename;
+    link.href = canvas.toDataURL("image/jpeg", 0.95);
+    link.click();
+  } catch (err) {
+    console.error("Export failed:", err);
+  }
+};
+
   return (
     <div style={s.root}>
       <style>{`
@@ -747,9 +773,9 @@ export default function Plugin() {
         )}
 
         {result && (() => {
-          const oc = outcomeConfig[result.finalOutcome];
-          return (
-            <div>
+  const oc = outcomeConfig[result.finalOutcome];
+  return (
+    <div ref={resultRef} style={{ background: "#ffffff" }}>
               <hr style={s.divider} />
 
               <div style={{
@@ -773,28 +799,54 @@ export default function Plugin() {
                 </span>
               </div>
 
-              <div style={s.tabBar}>
-                {(["trace", "narrative"] as const).map(tab => (
-                  <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab)}
-                    style={{
-                      padding: "7px 12px",
-                      background: "none",
-                      border: "none",
-                      borderBottom: activeTab === tab ? "2px solid #111" : "2px solid transparent",
-                      color: activeTab === tab ? "#111" : "#999",
-                      cursor: "pointer",
-                      fontSize: "11px",
-                      fontWeight: activeTab === tab ? 600 : 400,
-                      fontFamily: "inherit",
-                      marginBottom: "-1px",
-                    }}
-                  >
-                    {tab === "narrative" ? "Report" : "Step Trace"}
-                  </button>
-                ))}
-              </div>
+              <div style={{ ...s.tabBar, justifyContent: "space-between", alignItems: "center" }}>
+  <div style={{ display: "flex" }}>
+    {(["trace", "narrative"] as const).map(tab => (
+      <button
+        key={tab}
+        onClick={() => setActiveTab(tab)}
+        style={{
+          padding: "7px 12px",
+          background: "none",
+          border: "none",
+          borderBottom: activeTab === tab ? "2px solid #111" : "2px solid transparent",
+          color: activeTab === tab ? "#111" : "#999",
+          cursor: "pointer",
+          fontSize: "11px",
+          fontWeight: activeTab === tab ? 600 : 400,
+          fontFamily: "inherit",
+          marginBottom: "-1px",
+        }}
+      >
+        {tab === "narrative" ? "Report" : "Step Trace"}
+      </button>
+    ))}
+  </div>
+  <button
+    onClick={() => {
+      const conditionLabel = CONDITIONS.find(c => c.value === condition)?.label ?? condition;
+      const filename = `visight_${activeTab}_${persona}_${conditionLabel}_${Math.round(severity * 100)}pct.jpg`
+        .replace(/[^a-z0-9_.\-]/gi, "_")
+        .toLowerCase();
+      exportAsJpeg(filename);
+    }}
+    style={{
+      background: "none",
+      border: "1px solid #e0e0e0",
+      borderRadius: "4px",
+      padding: "4px 8px",
+      fontSize: "10px",
+      fontWeight: 600,
+      color: "#555",
+      cursor: "pointer",
+      fontFamily: "inherit",
+      letterSpacing: "0.03em",
+      marginBottom: "1px",
+    }}
+  >
+    ↓ Export
+  </button>
+</div>
 
               {activeTab === "narrative" && (() => {
                 const report = result.parsedReport;
