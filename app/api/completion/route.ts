@@ -168,7 +168,7 @@ async function runTraversalStep(
   choice: number | null;
   reasoning: string;
   confidence: string;
-  outcome: "continue" | "completed" | "abandon" | "cannot_find_target";
+  outcome: "continue" | "completed" | "abandon";
 }> {
   const conditionDescription = CONDITION_DESCRIPTIONS[condition] ?? condition;
   const severityLabel = severity >= 0.8 ? "severe" : severity >= 0.5 ? "moderate" : "mild";
@@ -187,6 +187,16 @@ async function runTraversalStep(
     ? `\nYour journey so far:\n${history.map((h, i) => `Step ${i + 1}: ${h}`).join("\n")}`
     : "";
 
+  const behaviorProfile = persona.techLiteracy === "high"
+    ? `${persona.name} quickly scans for recognizable UI patterns and taps the most plausible element without reading everything. Comfortable trying things and backtracking if wrong.`
+    : `${persona.name} reads carefully before tapping and may tap elements that don't look like conventional buttons if they seem topically relevant. More likely to misread navigation patterns or overlook non-obvious interactive elements.`;
+
+  const frustrationStage = stepNumber <= 3
+    ? `STAGE: Exploring (step ${stepNumber}/10). ${persona.name} is still orienting. Always tap something — never abandon this early. Try the most plausible element even under uncertainty.`
+    : stepNumber <= 6
+    ? `STAGE: Uncertain (step ${stepNumber}/10). ${persona.name} is losing confidence. If recent taps haven't helped, try adjacent or fallback elements — a nav tab, a back button, a different section. Still do not abandon.`
+    : `STAGE: Frustrated (step ${stepNumber}/10). ${persona.name} is running out of patience. May make desperate or exploratory taps. Can choose abandon only if genuinely stuck in a loop with no untried elements remaining.`;
+
   const systemPrompt = `You are simulating a real user navigating a mobile/desktop UI prototype.
 
 PERSONA:
@@ -196,6 +206,9 @@ PERSONA:
 - Device: ${persona.device}
 - Background: ${persona.backstory}
 
+BEHAVIOR:
+${behaviorProfile}
+
 VISUAL CONDITION:
 - The image has already been visually transformed to simulate this condition.
 - Reason about what ${persona.name} can and cannot perceive based SOLELY on what is visible in the transformed image.
@@ -203,17 +216,13 @@ VISUAL CONDITION:
 TASK:
 ${persona.name} is trying to: "${task}"
 
+${frustrationStage}
+
 RULES:
-- You must ALWAYS choose ONE interactive element to tap. Real users do not give up easily.
-- Choose abandon ONLY as a last resort: if you have already tried multiple elements and made no progress, OR if the screen is completely black or blank with nothing perceivable at all.
-- A real user with a visual impairment will make their best guess even when uncertain. Low confidence is not a reason to abandon, it is a reason to guess.
-- If you cannot clearly read a label, tap whatever element seems most likely based on its position, shape, or partial visibility.
-- Choose cannot_find_target if: you can describe what you want to tap but it genuinely does not appear anywhere in the interactive elements list.
-- You have a maximum of 10 steps. Only abandon if you have been going in circles with no progress for several steps.
+- When uncertain, always tap. A real user would rather try something and be wrong than do nothing. Tap the element whose position or partial appearance most suggests it could lead toward the goal — even a wrong tap produces information about the interface.
+- Use your journey history to avoid immediately re-tapping what you just tried, but do not rule out revisiting screens — real users backtrack.
 - Set outcome to "completed" ONLY if the screen you are CURRENTLY LOOKING AT right now visually matches the task goal. Do not complete based on what you expect to see after tapping — only based on what you can see right now.
-- You cannot declare completion because you tapped something that should lead to the goal. You must actually be on the goal screen already to declare completion.
 - When unsure whether the current screen matches the goal, choose "continue".
-- Do not continue navigating after the goal is achieved.
 - Respond ONLY with valid JSON. No explanation outside the JSON.
 
 RESPONSE FORMAT:
@@ -221,7 +230,7 @@ RESPONSE FORMAT:
   "choice": <number from the list, or null if abandoning or completed>,
   "reasoning": "<explain what ${persona.name} perceives and why they make this choice>",
   "confidence": "<high | medium | low>",
-  "outcome": "<continue | completed | abandon | cannot_find_target>"
+  "outcome": "<continue | completed | abandon>"
 }`;
 
   const userPrompt = `This is step ${stepNumber} of your navigation.${historyText}
@@ -267,7 +276,7 @@ What does ${persona.name} do?`;
       choice: null,
       reasoning: "Failed to parse model response.",
       confidence: "low",
-      outcome: "abandon",
+      outcome: "abandon" as const,
     };
   }
 }
@@ -446,11 +455,7 @@ export async function POST(req: NextRequest) {
         break;
       }
 
-      if (result.outcome === "cannot_find_target") {
-        finalOutcome = "failure";
-        stoppedAtStep = stepNumber;
-        break;
-      }
+
 
       const nextFrameId = chosenElement?.destinationId;
       const nextStep = nextFrameId ? frameMap.get(nextFrameId) : null;
