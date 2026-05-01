@@ -126,7 +126,7 @@ function crossReferenceElements(
     const match = interactiveElements.find((el, idx) => {
       if (matchedWiredIndices.has(idx)) return false;
       const elNameLower = el.name.toLowerCase();
-      const detectedWords = detectedLower.split(/\s+/).filter((w: string) => w.length > 3);
+      const detectedWords = detectedLower.split(/\s+/).filter((w: string) => w.length > 1);
       return (
         detectedLower.includes(elNameLower) ||
         elNameLower.includes(detectedLower) ||
