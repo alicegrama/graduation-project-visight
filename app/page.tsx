@@ -423,40 +423,46 @@ export default function Plugin() {
       async (figma, { startNodeId }) => {
         const results: any[] = [];
         const visited = new Set<string>();
-        let currentId: string | null = startNodeId;
+        const queue: string[] = [startNodeId];
 
-        while (currentId && !visited.has(currentId)) {
-          visited.add(currentId);
-          const node = figma.getNodeById(currentId);
-          if (!node || node.type !== "FRAME") break;
-          const bytes = await node.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: 1 } });
-          const interactiveElements: any[] = [];
+        const collectInteractiveElements = (node: any) => {
+          const elements: any[] = [];
           let elementIndex = 1;
-          const children = node.findAll(() => true);
-
-          for (const child of children) {
-            if ("reactions" in child && (child as any).reactions.length > 0) {
-              const navigatingReactions = (child as any).reactions.filter(
-                (r: any) => r.action?.type === "NODE" && r.action?.destinationId
-              );
-              if (navigatingReactions.length > 0) {
-                let meaningfulName = child.name;
-                try {
-                  const textChild = "findOne" in child ? (child as any).findOne((n: any) => n.type === "TEXT") : null;
-                  if (textChild?.characters) meaningfulName = textChild.characters;
-                } catch { }
-                interactiveElements.push({
-                  index: elementIndex++,
-                  name: meaningfulName,
-                  destinationId: navigatingReactions[0].action.destinationId,
-                  x: (child as any).x,
-                  y: (child as any).y,
-                  frameWidth: node.width,
-                  frameHeight: node.height,
-                });
-              }
-            }
+          for (const child of node.findAll(() => true)) {
+            if (child.type === "TEXT") continue;
+            if (!("reactions" in child) || (child as any).reactions.length === 0) continue;
+            const navigating = (child as any).reactions.filter(
+              (r: any) => r.action?.type === "NODE" && r.action?.destinationId
+            );
+            if (navigating.length === 0) continue;
+            let meaningfulName = child.name;
+            try {
+              const textChild = "findOne" in child ? (child as any).findOne((n: any) => n.type === "TEXT") : null;
+              if (textChild?.characters) meaningfulName = textChild.characters;
+            } catch {}
+            elements.push({
+              index: elementIndex++,
+              name: meaningfulName,
+              destinationId: navigating[0].action.destinationId,
+              x: (child as any).x,
+              y: (child as any).y,
+              frameWidth: node.width,
+              frameHeight: node.height,
+            });
           }
+          return elements;
+        };
+
+        while (queue.length > 0) {
+          const currentId = queue.shift()!;
+          if (visited.has(currentId)) continue;
+          visited.add(currentId);
+
+          const node = figma.getNodeById(currentId);
+          if (!node || node.type !== "FRAME") continue;
+
+          const bytes = await node.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: 1 } });
+          const interactiveElements = collectInteractiveElements(node);
 
           results.push({
             frameId: node.id,
@@ -468,53 +474,11 @@ export default function Plugin() {
             previewOnly: false,
           });
 
-          // Prefer unvisited destinations, prioritising nav elements over content elements
-          let nextId: string | null = null;
-          let contentNextId: string | null = null;
-
-          for (const child of children) {
-            if ("reactions" in child) {
-              for (const reaction of (child as any).reactions) {
-                if (reaction.action?.type === "NODE" && reaction.action?.destinationId) {
-                  const destId = reaction.action.destinationId;
-                  if (visited.has(destId)) continue;
-                  const name = (child.name || "").toLowerCase();
-                  const isContentCard = name.includes("card") || name.includes("drag") || name.includes("overlay");
-                  if (isContentCard && !contentNextId) {
-                    contentNextId = destId;
-                  } else if (!isContentCard && !nextId) {
-                    nextId = destId;
-                  }
-                }
-              }
+          for (const el of interactiveElements) {
+            if (el.destinationId && !visited.has(el.destinationId)) {
+              queue.push(el.destinationId);
             }
           }
-
-          currentId = nextId ?? contentNextId;
-        }
-
-        // Export destination frames not already in the walk sequence
-        const allDestIds: string[] = [];
-        for (const result of results) {
-          for (const el of result.interactiveElements) {
-            if (el.destinationId && !results.find((r: any) => r.frameId === el.destinationId) && !allDestIds.includes(el.destinationId)) {
-              allDestIds.push(el.destinationId);
-            }
-          }
-        }
-        for (const destId of allDestIds) {
-          const destNode = figma.getNodeById(destId);
-          if (!destNode || destNode.type !== "FRAME") continue;
-          const destBytes = await destNode.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: 1 } });
-          results.push({
-            frameId: destNode.id,
-            frameName: destNode.name,
-            imageBytes: Array.from(destBytes),
-            interactiveElements: [],
-            frameWidth: destNode.width,
-            frameHeight: destNode.height,
-            previewOnly: true,
-          });
         }
 
         return results;
