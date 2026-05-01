@@ -19,7 +19,6 @@ const CONDITIONS = [
   { value: "contrast_sensitivity", label: "Contrast Sensitivity Loss" },
   { value: "double_vision", label: "Double Vision (diplopia)" },
   { value: "glare", label: "Glare / Photophobia" },
-  { value: "detail_loss", label: "Detail Loss (pixelation)" },
 ];
 
 const PERSONAS = [
@@ -61,6 +60,14 @@ type SimulationResult = {
   narrative: string;
   personaName: string;
   parsedReport?: NarrativeReport;
+};
+
+type BatchResult = {
+  condition: string;
+  conditionLabel: string;
+  result: SimulationResult;
+  previews: { frameName: string; transformedUrl: string }[];
+  elemDestMap: Record<string, string>;
 };
 
 function getPositionLabel(x: number, y: number, frameWidth: number, frameHeight: number): string {
@@ -345,6 +352,10 @@ export default function Plugin() {
   const resultRef = useRef<HTMLDivElement>(null);
   const [configOpen, setConfigOpen] = useState(true);
   const [elementDestinationMap, setElementDestinationMap] = useState<Record<string, string>>({});
+  const [batchMode, setBatchMode] = useState(false);
+  const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
+  const [batchResults, setBatchResults] = useState<BatchResult[]>([]);
+  const [activeBatchCondition, setActiveBatchCondition] = useState<string | null>(null);
 
   useEffect(() => {
     const handler = (event: any) => {
@@ -581,6 +592,156 @@ export default function Plugin() {
     setIsLoading(false);
   };
 
+  const runBatch = async () => {
+    if (!selectedFlow || !task.trim() || selectedConditions.length === 0) {
+      setStatus("Please select at least one condition and set a task.");
+      return;
+    }
+    setIsLoading(true);
+    setBatchResults([]);
+    setActiveBatchCondition(null);
+    setStatus("");
+    setConfigOpen(false);
+    setLoadingStep("Exporting frames from Figma...");
+    setLoadingProgress(0);
+    setLoadingTotal(0);
+
+    const exportedSteps = await figmaAPI.run(
+      async (figma, { startNodeId }) => {
+        const results: any[] = [];
+        const visited = new Set<string>();
+        const queue: string[] = [startNodeId];
+        const collectInteractiveElements = (node: any) => {
+          const elements: any[] = [];
+          let elementIndex = 1;
+          for (const child of node.findAll(() => true)) {
+            if (child.type === "TEXT") continue;
+            if (!("reactions" in child) || (child as any).reactions.length === 0) continue;
+            const navigating = (child as any).reactions.filter(
+              (r: any) => r.action?.type === "NODE" && r.action?.destinationId
+            );
+            if (navigating.length === 0) continue;
+            let meaningfulName = child.name;
+            try {
+              const textChild = "findOne" in child ? (child as any).findOne((n: any) => n.type === "TEXT") : null;
+              if (textChild?.characters) meaningfulName = textChild.characters;
+            } catch {}
+            elements.push({
+              index: elementIndex++,
+              name: meaningfulName,
+              destinationId: navigating[0].action.destinationId,
+              x: (child as any).x,
+              y: (child as any).y,
+              frameWidth: node.width,
+              frameHeight: node.height,
+            });
+          }
+          return elements;
+        };
+        while (queue.length > 0) {
+          const currentId = queue.shift()!;
+          if (visited.has(currentId)) continue;
+          visited.add(currentId);
+          const node = figma.getNodeById(currentId);
+          if (!node || node.type !== "FRAME") continue;
+          const bytes = await node.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: 1 } });
+          const interactiveElements = collectInteractiveElements(node);
+          results.push({ frameId: node.id, frameName: node.name, imageBytes: Array.from(bytes), interactiveElements, frameWidth: node.width, frameHeight: node.height });
+          for (const el of interactiveElements) {
+            if (el.destinationId && !visited.has(el.destinationId)) queue.push(el.destinationId);
+          }
+        }
+        return results;
+      },
+      { startNodeId: selectedFlow }
+    );
+
+    const elemDestMap: Record<string, string> = {};
+    exportedSteps.forEach((s: any) => {
+      s.interactiveElements.forEach((el: any) => {
+        if (el.destinationId) {
+          const dest = exportedSteps.find((f: any) => f.frameId === el.destinationId);
+          if (dest) elemDestMap[el.name] = dest.frameName;
+        }
+      });
+    });
+
+    const accumulated: BatchResult[] = [];
+
+    for (let ci = 0; ci < selectedConditions.length; ci++) {
+      const cond = selectedConditions[ci];
+      const condLabel = CONDITIONS.find(c => c.value === cond)?.label ?? cond;
+      setLoadingStep(`[${ci + 1}/${selectedConditions.length}] Transforming: ${condLabel}`);
+      setLoadingProgress(0);
+      setLoadingTotal(exportedSteps.length);
+
+      const stepsWithTransformed: any[] = [];
+      const previews: { frameName: string; transformedUrl: string }[] = [];
+
+      for (let i = 0; i < exportedSteps.length; i++) {
+        const step = exportedSteps[i];
+        setLoadingProgress(i + 1);
+        try {
+          const blob = new Blob([new Uint8Array(step.imageBytes)], { type: "image/png" });
+          const formData = new FormData();
+          formData.append("image", blob, `${step.frameName}.png`);
+          formData.append("condition", cond);
+          formData.append("severity", severity.toString());
+          const res = await fetch(`${SERVER_URL}/transform`, { method: "POST", body: formData });
+          if (!res.ok) throw new Error(`Server error: ${res.status}`);
+          const transformedBlob = await res.blob();
+          const transformedBase64 = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve((reader.result as string).split(",")[1]);
+            reader.readAsDataURL(transformedBlob);
+          });
+          const elementsWithPositions = step.interactiveElements.map((el: any) => ({
+            index: el.index,
+            name: el.name,
+            position: getPositionLabel(el.x, el.y, step.frameWidth, step.frameHeight),
+            destinationId: el.destinationId,
+          }));
+          stepsWithTransformed.push({ frameId: step.frameId, frameName: step.frameName, transformedImageBase64: transformedBase64, interactiveElements: elementsWithPositions });
+          previews.push({ frameName: step.frameName, transformedUrl: `data:image/png;base64,${transformedBase64}` });
+        } catch (err) {
+          setStatus(`Error transforming ${step.frameName} for ${condLabel}: ${err}. Is the Python server running?`);
+          setIsLoading(false);
+          return;
+        }
+      }
+
+      setLoadingStep(`[${ci + 1}/${selectedConditions.length}] Simulating: ${condLabel}`);
+      setLoadingProgress(0);
+      setLoadingTotal(0);
+
+      try {
+        const res = await fetch("/api/completion", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ personaKey: persona, condition: cond, severity, task, steps: stepsWithTransformed }),
+        });
+        if (!res.ok) throw new Error(`API error: ${res.status}`);
+        const data: SimulationResult = await res.json();
+        try {
+          const cleaned = data.narrative.replace(/```json|```/g, "").trim();
+          data.parsedReport = JSON.parse(cleaned);
+        } catch { data.parsedReport = undefined; }
+
+        const batchEntry: BatchResult = { condition: cond, conditionLabel: condLabel, result: data, previews, elemDestMap };
+        accumulated.push(batchEntry);
+        setBatchResults([...accumulated]);
+        if (ci === 0) setActiveBatchCondition(cond);
+      } catch (err) {
+        setStatus(`Error simulating ${condLabel}: ${err}`);
+        setIsLoading(false);
+        return;
+      }
+    }
+
+    setLoadingStep("");
+    setIsLoading(false);
+  };
+
   const exportAsJpeg = async (filename: string) => {
   if (!resultRef.current) return;
   try {
@@ -672,29 +833,91 @@ export default function Plugin() {
                   </div>
                 </div>
 
-                <div style={s.grid2}>
-                  <div style={s.field}>
-                    <label style={s.label}>Condition</label>
-                    <select
-                      style={s.select}
-                      value={condition}
-                      onChange={e => setCondition(e.target.value)}
-                    >
-                      {CONDITIONS.map(c => (
-                        <option key={c.value} value={c.value}>{c.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div style={s.field}>
-                    <label style={s.label}>Severity — {Math.round(severity * 100)}%</label>
-                    <input
-                      type="range" min="0" max="1" step="0.05"
-                      value={severity}
-                      onChange={e => setSeverity(parseFloat(e.target.value))}
-                      style={{ width: "100%", marginTop: "8px", accentColor: "#111" }}
-                    />
+                <div style={{ ...s.field, marginBottom: "10px" }}>
+                  <label style={s.label}>Mode</label>
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    {(["single", "batch"] as const).map(m => (
+                      <button
+                        key={m}
+                        onClick={() => setBatchMode(m === "batch")}
+                        style={{
+                          flex: 1,
+                          padding: "6px",
+                          background: (m === "batch") === batchMode ? "#111" : "#f9f9f9",
+                          color: (m === "batch") === batchMode ? "#fff" : "#555",
+                          border: "1px solid #e0e0e0",
+                          borderRadius: "5px",
+                          fontSize: "11px",
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          fontFamily: "inherit",
+                        }}
+                      >
+                        {m === "single" ? "Single condition" : "Batch compare"}
+                      </button>
+                    ))}
                   </div>
                 </div>
+
+                {!batchMode ? (
+                  <div style={s.grid2}>
+                    <div style={s.field}>
+                      <label style={s.label}>Condition</label>
+                      <select
+                        style={s.select}
+                        value={condition}
+                        onChange={e => setCondition(e.target.value)}
+                      >
+                        {CONDITIONS.map(c => (
+                          <option key={c.value} value={c.value}>{c.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={s.field}>
+                      <label style={s.label}>Severity — {Math.round(severity * 100)}%</label>
+                      <input
+                        type="range" min="0" max="1" step="0.05"
+                        value={severity}
+                        onChange={e => setSeverity(parseFloat(e.target.value))}
+                        style={{ width: "100%", marginTop: "8px", accentColor: "#111" }}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div style={s.field}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "6px" }}>
+                      <label style={s.label}>Conditions to compare</label>
+                      <div style={{ display: "flex", gap: "8px" }}>
+                        <button onClick={() => setSelectedConditions(CONDITIONS.map(c => c.value))} style={{ ...s.btnGhost, padding: 0, fontSize: "10px" }}>All</button>
+                        <button onClick={() => setSelectedConditions([])} style={{ ...s.btnGhost, padding: 0, fontSize: "10px" }}>None</button>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px" }}>
+                      {CONDITIONS.map(c => (
+                        <label key={c.value} style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "11px", color: "#333", cursor: "pointer", padding: "3px 0" }}>
+                          <input
+                            type="checkbox"
+                            checked={selectedConditions.includes(c.value)}
+                            onChange={e => setSelectedConditions(prev =>
+                              e.target.checked ? [...prev, c.value] : prev.filter(v => v !== c.value)
+                            )}
+                            style={{ accentColor: "#111" }}
+                          />
+                          {c.label}
+                        </label>
+                      ))}
+                    </div>
+                    <div style={{ marginTop: "8px" }}>
+                      <label style={s.label}>Severity — {Math.round(severity * 100)}%</label>
+                      <input
+                        type="range" min="0" max="1" step="0.05"
+                        value={severity}
+                        onChange={e => setSeverity(parseFloat(e.target.value))}
+                        style={{ width: "100%", marginTop: "4px", accentColor: "#111" }}
+                      />
+                    </div>
+                  </div>
+                )}
 
                 <div style={s.field}>
                   <label style={s.label}>Task goal</label>
@@ -708,11 +931,11 @@ export default function Plugin() {
                 </div>
 
                 <button
-                  onClick={runSimulation}
-                  disabled={isLoading}
-                  style={isLoading ? s.btnDisabled : s.btnPrimary}
+                  onClick={batchMode ? runBatch : runSimulation}
+                  disabled={isLoading || (batchMode && selectedConditions.length === 0)}
+                  style={(isLoading || (batchMode && selectedConditions.length === 0)) ? s.btnDisabled : s.btnPrimary}
                 >
-                  {isLoading ? "Running..." : "Run Simulation →"}
+                  {isLoading ? "Running..." : batchMode ? `Run Batch (${selectedConditions.length} condition${selectedConditions.length !== 1 ? "s" : ""}) →` : "Run Simulation →"}
                 </button>
               </>
             )}
@@ -735,6 +958,101 @@ export default function Plugin() {
             </div>
           </div>
         )}
+
+        {batchResults.length > 0 && (() => {
+          const active = batchResults.find(r => r.condition === activeBatchCondition) ?? batchResults[0];
+          return (
+            <div>
+              <hr style={s.divider} />
+              <div style={{ fontSize: "11px", fontWeight: 600, color: "#555", textTransform: "uppercase" as const, letterSpacing: "0.05em", marginBottom: "8px" }}>
+                {active.result.personaName} · {Math.round(severity * 100)}% severity · {task}
+              </div>
+
+              {/* Summary grid */}
+              <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(batchResults.length, 3)}, 1fr)`, gap: "6px", marginBottom: "12px" }}>
+                {batchResults.map(br => {
+                  const oc = outcomeConfig[br.result.finalOutcome];
+                  const isActive = br.condition === (activeBatchCondition ?? batchResults[0].condition);
+                  return (
+                    <button
+                      key={br.condition}
+                      onClick={() => setActiveBatchCondition(br.condition)}
+                      style={{
+                        padding: "8px",
+                        background: isActive ? oc.bg : "#f9f9f9",
+                        border: `1px solid ${isActive ? oc.border : "#e0e0e0"}`,
+                        borderRadius: "6px",
+                        cursor: "pointer",
+                        textAlign: "left" as const,
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      <div style={{ fontSize: "10px", fontWeight: 700, color: oc.color, marginBottom: "2px" }}>{oc.label}</div>
+                      <div style={{ fontSize: "10px", color: "#555", lineHeight: 1.4 }}>{br.conditionLabel}</div>
+                      <div style={{ fontSize: "10px", color: "#999", marginTop: "2px" }}>{br.result.stoppedAtStep} step{br.result.stoppedAtStep !== 1 ? "s" : ""}</div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Active condition detail */}
+              {(() => {
+                const oc = outcomeConfig[active.result.finalOutcome];
+                return (
+                  <div style={{ border: `1px solid ${oc.border}`, borderRadius: "6px", overflow: "hidden" }}>
+                    <div style={{ background: oc.bg, padding: "8px 12px", borderBottom: `1px solid ${oc.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontSize: "11px", fontWeight: 600, color: "#333" }}>{active.conditionLabel}</span>
+                      <span style={{ fontSize: "11px", fontWeight: 700, color: oc.color }}>{oc.label}</span>
+                    </div>
+                    <div style={{ padding: "12px" }}>
+                      {active.result.parsedReport && (
+                        <p style={{ fontSize: "11px", color: "#444", lineHeight: 1.7, margin: "0 0 10px 0" }}>
+                          {active.result.parsedReport.summary}
+                        </p>
+                      )}
+                      {active.result.sessionTrace.map(step => {
+                        const preview = active.previews.find(p => p.frameName === step.frameName);
+                        return (
+                          <div key={step.step} style={{ ...s.stepBlock, marginBottom: "12px", paddingBottom: "12px" }}>
+                            <div style={s.stepHeader}>
+                              <span style={s.stepMeta}>Step {step.step} · {step.frameName}</span>
+                              <span style={{ ...s.stepMeta, color: step.confidence === "high" ? "#166534" : step.confidence === "medium" ? "#92400e" : "#991b1b" }}>
+                                {step.confidence} confidence
+                              </span>
+                            </div>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: "10px", alignItems: "start" }}>
+                              {preview && (
+                                <img src={preview.transformedUrl} alt={step.frameName}
+                                  style={{ width: "80%", borderRadius: "4px", border: "1px solid #e5e5e5", display: "block", padding: "4px", boxSizing: "border-box" as const }} />
+                              )}
+                              <div>
+                                <p style={s.stepReasoning}>{step.reasoning}</p>
+                                <div style={s.stepChoice}>→ {step.choice}</div>
+                                {step.detectedButNotWired && step.detectedButNotWired.length > 0 && (
+                                  <div style={s.warningOrange}>
+                                    <span style={{ fontWeight: 600 }}>Visible but unwired: </span>
+                                    {step.detectedButNotWired.slice(0, 5).join(", ")}
+                                    {step.detectedButNotWired.length > 5 && ` +${step.detectedButNotWired.length - 5} more`}
+                                  </div>
+                                )}
+                                {step.wiredButNotDetected && step.wiredButNotDetected.length > 0 && (
+                                  <div style={s.warningYellow}>
+                                    <span style={{ fontWeight: 600 }}>Wired but imperceptible: </span>
+                                    {step.wiredButNotDetected.join(", ")}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          );
+        })()}
 
         {result && (() => {
   const oc = outcomeConfig[result.finalOutcome];

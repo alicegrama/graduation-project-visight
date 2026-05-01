@@ -467,6 +467,8 @@ export async function POST(req: NextRequest) {
       currentStep = nextStep;
     }
 
+    if (stoppedAtStep === 0) stoppedAtStep = MAX_STEPS;
+
     const narrative = await generateNarrative(
       persona,
       condition,
