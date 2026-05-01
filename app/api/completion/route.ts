@@ -161,8 +161,7 @@ async function runTraversalStep(
   frameName: string,
   history: string[],
   screenDescription: string,
-  detectedButNotWired: string[],
-  wiredButNotDetected: { index: number; name: string; position: string }[]
+  detectedButNotWired: string[]
 ): Promise<{
   choice: number | null;
   reasoning: string;
@@ -178,14 +177,9 @@ async function runTraversalStep(
         .join("\n")
     : "No interactive elements detected on this screen.";
 
-  const crossRefContext = [
-    detectedButNotWired.length > 0
-      ? `⚠ ${persona.name} can see these elements but they lead nowhere (dead ends): ${detectedButNotWired.join(", ")}`
-      : "",
-    wiredButNotDetected.length > 0
-  ? `⚠ ${wiredButNotDetected.length} interactive element(s) exist on this screen but are not visible to ${persona.name} due to their visual condition. ${persona.name} cannot use these elements.`
-  : "",
-  ].filter(Boolean).join("\n");
+  const crossRefContext = detectedButNotWired.length > 0
+    ? `⚠ ${persona.name} can see these elements but they lead nowhere (dead ends): ${detectedButNotWired.join(", ")}`
+    : "";
 
   const historyText = history.length > 0
     ? `\nYour journey so far:\n${history.map((h, i) => `Step ${i + 1}: ${h}`).join("\n")}`
@@ -215,7 +209,6 @@ RULES:
 - You have a maximum of 10 steps. Only abandon if you have been going in circles with no progress for several steps.
 - Set outcome to "completed" ONLY if the screen you are CURRENTLY LOOKING AT right now visually matches the task goal. Do not complete based on what you expect to see after tapping — only based on what you can see right now.
 - You cannot declare completion because you tapped something that should lead to the goal. You must actually be on the goal screen already to declare completion.
-- If an element is listed as wired but imperceptible, treat it as if it does not exist. Do not tap it, do not reference it, do not infer its position from prior knowledge. You can only interact with elements you can actually perceive in the image.
 - When unsure whether the current screen matches the goal, choose "continue".
 - Do not continue navigating after the goal is achieved.
 
@@ -420,8 +413,7 @@ export async function POST(req: NextRequest) {
   step.frameName,
   history,
   screenDescription,
-  detectedButNotWired,
-  wiredButNotDetected
+  detectedButNotWired
 );
 
       const chosenElement = result.choice !== null
