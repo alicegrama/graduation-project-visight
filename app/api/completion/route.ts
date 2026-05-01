@@ -50,24 +50,26 @@ const CONDITION_DESCRIPTIONS: Record<string, string> = {
 async function detectVisualElements(
   transformedImageBase64: string,
   persona: typeof PERSONAS[string],
-  condition: string,
-  severity: number
 ): Promise<{
   detectedElements: string[];
   screenDescription: string;
 }> {
-  const conditionDescription = CONDITION_DESCRIPTIONS[condition] ?? condition;
-  const severityLabel = severity >= 0.8 ? "severe" : severity >= 0.5 ? "moderate" : "mild";
-
   const response = await openai.chat.completions.create({
     model: "gpt-4o",
     max_tokens: 400,
     messages: [
       {
         role: "system",
-        content: `You are simulating the visual perception of ${persona.name}, a user with ${severityLabel} ${conditionDescription}.
-The image has already been transformed to simulate this condition.
-Your job is to describe what interactive elements ${persona.name} can perceive on this screen.
+        content: `You are assessing what a human user would be able to perceive on a visually transformed UI screen.
+
+IMPORTANT: Your own visual processing capabilities significantly exceed those of a human with a visual impairment. The image has been transformed to simulate a visual condition, but you can likely still read text and identify elements that a real human would find completely illegible or invisible.
+
+Apply a conservative, human-calibrated threshold:
+- If text appears blurry, faded, or low-contrast in this image, assume a human CANNOT read it
+- If an element's shape or purpose is ambiguous or unclear, assume a human CANNOT identify it
+- When in doubt, exclude rather than include
+- Only list elements that would be unambiguously perceivable to someone with significantly impaired vision
+
 Respond ONLY with valid JSON. No explanation outside the JSON.`,
       },
       {
@@ -82,15 +84,15 @@ Respond ONLY with valid JSON. No explanation outside the JSON.`,
           },
           {
             type: "text",
-            text: `Looking at this screen through the eyes of ${persona.name} with ${severityLabel} ${conditionDescription}:
+            text: `Looking at this screen as ${persona.name}:
 
-1. What elements look like they could be tapped, clicked, or interacted with? List only what ${persona.name} can actually perceive given their visual condition.
+1. What elements look like they could be tapped, clicked, or interacted with? List only what you can actually perceive — buttons, cards, pills, tabs, icons, list items. Do not include elements that are too blurry or indistinct to identify.
 2. Briefly describe the overall screen.
 
 Respond with:
 {
   "detectedElements": ["element description 1", "element description 2", ...],
-  "screenDescription": "brief description of what ${persona.name} perceives"
+  "screenDescription": "brief description of what is perceivable on screen"
 }`,
           },
         ],
@@ -195,8 +197,9 @@ PERSONA:
 - Background: ${persona.backstory}
 
 VISUAL CONDITION:
-- ${persona.name} has a visual impairment. The image you are seeing has already been visually transformed to simulate its effects.
-- Reason about what ${persona.name} can and cannot perceive based SOLELY on what is visible in the transformed image. Do not assume any impairment beyond what you can directly observe.
+- The image has already been visually transformed to simulate this condition.
+- Reason about what ${persona.name} can and cannot perceive based SOLELY on what is visible in the transformed image.
+
 TASK:
 ${persona.name} is trying to: "${task}"
 
@@ -211,7 +214,6 @@ RULES:
 - You cannot declare completion because you tapped something that should lead to the goal. You must actually be on the goal screen already to declare completion.
 - When unsure whether the current screen matches the goal, choose "continue".
 - Do not continue navigating after the goal is achieved.
-
 - Respond ONLY with valid JSON. No explanation outside the JSON.
 
 RESPONSE FORMAT:
@@ -222,7 +224,7 @@ RESPONSE FORMAT:
   "outcome": "<continue | completed | abandon | cannot_find_target>"
 }`;
 
-const userPrompt = `This is step ${stepNumber} of your navigation.${historyText}
+  const userPrompt = `This is step ${stepNumber} of your navigation.${historyText}
 
 Current screen: "${frameName}"
 What ${persona.name} perceives: ${screenDescription}
@@ -231,8 +233,6 @@ Interactive elements ${persona.name} can both see AND tap:
 ${elementsText}
 
 ${crossRefContext}
-
-Important: ${persona.name} is currently ON "${frameName}". Do not tap elements that navigate back to the current screen or to already-visited screens. Choose the element most likely to move toward the task goal.
 
 What does ${persona.name} do?`;
 
@@ -331,7 +331,7 @@ Return a JSON object with this exact structure. No markdown, no code fences, jus
 
 Severity guide:
 - critical: blocked the user from completing the task entirely
-- major: caused significant confusion, wrong navigation, or multiple failed attempts  
+- major: caused significant confusion, wrong navigation, or multiple failed attempts
 - minor: caused hesitation or uncertainty but did not prevent task completion
 
 Identify between 2 and 6 issues. Focus on issues caused by the visual condition, not general UX problems. Each issue must reference a specific screen from the navigation trace.`;
@@ -376,8 +376,6 @@ export async function POST(req: NextRequest) {
       const { detectedElements, screenDescription } = await detectVisualElements(
         step.transformedImageBase64,
         persona,
-        condition,
-        severity
       );
 
       const { matched, detectedButNotWired, wiredButNotDetected } = crossReferenceElements(
@@ -403,18 +401,18 @@ export async function POST(req: NextRequest) {
       }
 
       const result = await runTraversalStep(
-  step.transformedImageBase64,
-  matched.map((m: any) => m.wired),
-  persona,
-  condition,
-  severity,
-  task,
-  stepNumber,
-  step.frameName,
-  history,
-  screenDescription,
-  detectedButNotWired
-);
+        step.transformedImageBase64,
+        matched.map((m: any) => m.wired),
+        persona,
+        condition,
+        severity,
+        task,
+        stepNumber,
+        step.frameName,
+        history,
+        screenDescription,
+        detectedButNotWired
+      );
 
       const chosenElement = result.choice !== null
         ? step.interactiveElements.find((el: any) => el.index === result.choice)
@@ -454,7 +452,6 @@ export async function POST(req: NextRequest) {
         break;
       }
 
-      // Dynamic navigation: follow the chosen button's actual wiring
       const nextFrameId = chosenElement?.destinationId;
       const nextStep = nextFrameId ? frameMap.get(nextFrameId) : null;
       if (!nextStep) {
