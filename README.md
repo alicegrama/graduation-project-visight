@@ -105,3 +105,7 @@ A few things to note about this helper:
 - [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
 - [Figma Plugin API](https://www.figma.com/plugin-docs/) - learn about the Figma plugin API.
 - [OpenAI API](https://platform.openai.com/docs/guides/gpt) - learn about GPT APIs.
+
+## Acknowledgments
+
+This project was bootstrapped from [figma/ai-plugin-template](https://github.com/figma/ai-plugin-template) by [Sawyer Hood](https://github.com/SawyerHood), used under its MIT license. The Next.js/Figma iframe scaffolding (`lib/figmaAPI.ts`, `plugin/`, the base app structure) originates from that template.
