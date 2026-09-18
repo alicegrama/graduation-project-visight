@@ -362,6 +362,7 @@ export async function POST(req: NextRequest) {
     const persona = PERSONAS[personaKey] ?? PERSONAS.maya;
     const sessionTrace: {
       step: number;
+      frameId: string;
       frameName: string;
       choice: string;
       reasoning: string;
@@ -395,6 +396,7 @@ export async function POST(req: NextRequest) {
       if (detectedElements.length === 0) {
         sessionTrace.push({
           step: stepNumber,
+          frameId: step.frameId,
           frameName: step.frameName,
           choice: "nothing",
           reasoning: `${persona.name} cannot perceive any interactive elements on this screen due to their visual condition.`,
@@ -431,6 +433,7 @@ export async function POST(req: NextRequest) {
 
       sessionTrace.push({
         step: stepNumber,
+        frameId: step.frameId,
         frameName: step.frameName,
         choice: chosenName,
         reasoning: result.reasoning,
