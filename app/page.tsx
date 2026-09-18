@@ -425,6 +425,8 @@ export default function Plugin() {
     setResult(null);
     setTransformedPreviews([]);
     setElementDestinationMap({});
+    setBatchResults([]);
+    setActiveBatchCondition(null);
     setStatus("");
     setLoadingStep("Exporting frames from Figma...");
     setLoadingProgress(0);
@@ -601,6 +603,9 @@ export default function Plugin() {
     setIsLoading(true);
     setBatchResults([]);
     setActiveBatchCondition(null);
+    setResult(null);
+    setTransformedPreviews([]);
+    setElementDestinationMap({});
     setStatus("");
     setConfigOpen(false);
     setLoadingStep("Exporting frames from Figma...");
