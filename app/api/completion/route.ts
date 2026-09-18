@@ -359,6 +359,13 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { personaKey, condition, severity, task, steps } = body;
 
+    if (!Array.isArray(steps) || steps.length === 0) {
+      return NextResponse.json(
+        { error: "steps must be a non-empty array" },
+        { status: 400 }
+      );
+    }
+
     const persona = PERSONAS[personaKey] ?? PERSONAS.maya;
     const sessionTrace: {
       step: number;
