@@ -1320,11 +1320,18 @@ export default function Plugin() {
           bottom: 0,
           left: 0,
           right: 0,
-          height: "8px",
+          height: "10px",
           cursor: "ns-resize",
           touchAction: "none",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "#f5f5f5",
+          borderTop: "1px solid #e5e5e5",
         }}
-      />
+      >
+        <div style={{ width: "32px", height: "3px", borderRadius: "2px", background: "#ccc" }} />
+      </div>
     </div>
   );
 }
