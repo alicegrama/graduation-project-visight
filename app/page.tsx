@@ -331,6 +331,88 @@ const s: Record<string, React.CSSProperties> = {
   },
 };
 
+// Runs inside the Figma sandbox via figmaAPI.run() (see lib/figmaAPI.ts) — it is
+// stringified and eval'd there, so it cannot reference anything outside itself
+// besides `figma` and the passed params.
+async function exportFlowSteps(figma: any, { startNodeId }: { startNodeId: string }) {
+  const results: any[] = [];
+  const visited = new Set<string>();
+  const queue: string[] = [startNodeId];
+
+  const collectInteractiveElements = (node: any) => {
+    const elements: any[] = [];
+    let elementIndex = 1;
+    for (const child of node.findAll(() => true)) {
+      if (child.type === "TEXT") continue;
+      if (!("reactions" in child) || (child as any).reactions.length === 0) continue;
+      const navigating = (child as any).reactions.filter(
+        (r: any) => r.action?.type === "NODE" && r.action?.destinationId
+      );
+      if (navigating.length === 0) continue;
+      let meaningfulName = child.name;
+      try {
+        const textChild = "findOne" in child ? (child as any).findOne((n: any) => n.type === "TEXT") : null;
+        if (textChild?.characters) meaningfulName = textChild.characters;
+      } catch {}
+      elements.push({
+        index: elementIndex++,
+        name: meaningfulName,
+        destinationId: navigating[0].action.destinationId,
+        x: (child as any).x,
+        y: (child as any).y,
+        frameWidth: node.width,
+        frameHeight: node.height,
+      });
+    }
+    return elements;
+  };
+
+  while (queue.length > 0) {
+    const currentId = queue.shift()!;
+    if (visited.has(currentId)) continue;
+    visited.add(currentId);
+
+    const node = figma.getNodeById(currentId);
+    if (!node || node.type !== "FRAME") continue;
+
+    const bytes = await node.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: 1 } });
+    const interactiveElements = collectInteractiveElements(node);
+
+    results.push({
+      frameId: node.id,
+      frameName: node.name,
+      imageBytes: Array.from(bytes),
+      interactiveElements,
+      frameWidth: node.width,
+      frameHeight: node.height,
+      previewOnly: false,
+    });
+
+    for (const el of interactiveElements) {
+      if (el.destinationId && !visited.has(el.destinationId)) {
+        queue.push(el.destinationId);
+      }
+    }
+  }
+
+  return results;
+}
+
+// Builds a `${originFrameId}::${elementName}` -> destinationFrameName map for
+// client-side "Arrived at" lookups (see the read site in the trace view below).
+function buildElementDestinationMap(exportedSteps: any[]): Record<string, string> {
+  const elemDestMap: Record<string, string> = {};
+  exportedSteps.forEach((s: any) => {
+    s.interactiveElements.forEach((el: any) => {
+      if (el.destinationId) {
+        const dest = exportedSteps.find((f: any) => f.frameId === el.destinationId);
+        if (dest) elemDestMap[`${s.frameId}::${el.name}`] = dest.frameName;
+      }
+    });
+  });
+  return elemDestMap;
+}
+
 export default function Plugin() {
   const [flows, setFlows] = useState<Flow[]>([]);
   const [selectedFlow, setSelectedFlow] = useState<string | null>(null);
@@ -433,84 +515,9 @@ export default function Plugin() {
     setLoadingTotal(0);
     setConfigOpen(false);
 
-    const exportedSteps = await figmaAPI.run(
-      async (figma, { startNodeId }) => {
-        const results: any[] = [];
-        const visited = new Set<string>();
-        const queue: string[] = [startNodeId];
+    const exportedSteps = await figmaAPI.run(exportFlowSteps, { startNodeId: selectedFlow });
 
-        const collectInteractiveElements = (node: any) => {
-          const elements: any[] = [];
-          let elementIndex = 1;
-          for (const child of node.findAll(() => true)) {
-            if (child.type === "TEXT") continue;
-            if (!("reactions" in child) || (child as any).reactions.length === 0) continue;
-            const navigating = (child as any).reactions.filter(
-              (r: any) => r.action?.type === "NODE" && r.action?.destinationId
-            );
-            if (navigating.length === 0) continue;
-            let meaningfulName = child.name;
-            try {
-              const textChild = "findOne" in child ? (child as any).findOne((n: any) => n.type === "TEXT") : null;
-              if (textChild?.characters) meaningfulName = textChild.characters;
-            } catch {}
-            elements.push({
-              index: elementIndex++,
-              name: meaningfulName,
-              destinationId: navigating[0].action.destinationId,
-              x: (child as any).x,
-              y: (child as any).y,
-              frameWidth: node.width,
-              frameHeight: node.height,
-            });
-          }
-          return elements;
-        };
-
-        while (queue.length > 0) {
-          const currentId = queue.shift()!;
-          if (visited.has(currentId)) continue;
-          visited.add(currentId);
-
-          const node = figma.getNodeById(currentId);
-          if (!node || node.type !== "FRAME") continue;
-
-          const bytes = await node.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: 1 } });
-          const interactiveElements = collectInteractiveElements(node);
-
-          results.push({
-            frameId: node.id,
-            frameName: node.name,
-            imageBytes: Array.from(bytes),
-            interactiveElements,
-            frameWidth: node.width,
-            frameHeight: node.height,
-            previewOnly: false,
-          });
-
-          for (const el of interactiveElements) {
-            if (el.destinationId && !visited.has(el.destinationId)) {
-              queue.push(el.destinationId);
-            }
-          }
-        }
-
-        return results;
-      },
-      { startNodeId: selectedFlow }
-    );
-
-    // Build elementName → destinationFrameName map for client-side lookup
-    const elemDestMap: Record<string, string> = {};
-    exportedSteps.forEach((s: any) => {
-      s.interactiveElements.forEach((el: any) => {
-        if (el.destinationId) {
-          const dest = exportedSteps.find((f: any) => f.frameId === el.destinationId);
-          if (dest) elemDestMap[`${s.frameId}::${el.name}`] = dest.frameName;
-        }
-      });
-    });
-    setElementDestinationMap(elemDestMap);
+    setElementDestinationMap(buildElementDestinationMap(exportedSteps));
 
     setLoadingTotal(exportedSteps.length);
     setLoadingProgress(0);
@@ -612,65 +619,9 @@ export default function Plugin() {
     setLoadingProgress(0);
     setLoadingTotal(0);
 
-    const exportedSteps = await figmaAPI.run(
-      async (figma, { startNodeId }) => {
-        const results: any[] = [];
-        const visited = new Set<string>();
-        const queue: string[] = [startNodeId];
-        const collectInteractiveElements = (node: any) => {
-          const elements: any[] = [];
-          let elementIndex = 1;
-          for (const child of node.findAll(() => true)) {
-            if (child.type === "TEXT") continue;
-            if (!("reactions" in child) || (child as any).reactions.length === 0) continue;
-            const navigating = (child as any).reactions.filter(
-              (r: any) => r.action?.type === "NODE" && r.action?.destinationId
-            );
-            if (navigating.length === 0) continue;
-            let meaningfulName = child.name;
-            try {
-              const textChild = "findOne" in child ? (child as any).findOne((n: any) => n.type === "TEXT") : null;
-              if (textChild?.characters) meaningfulName = textChild.characters;
-            } catch {}
-            elements.push({
-              index: elementIndex++,
-              name: meaningfulName,
-              destinationId: navigating[0].action.destinationId,
-              x: (child as any).x,
-              y: (child as any).y,
-              frameWidth: node.width,
-              frameHeight: node.height,
-            });
-          }
-          return elements;
-        };
-        while (queue.length > 0) {
-          const currentId = queue.shift()!;
-          if (visited.has(currentId)) continue;
-          visited.add(currentId);
-          const node = figma.getNodeById(currentId);
-          if (!node || node.type !== "FRAME") continue;
-          const bytes = await node.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: 1 } });
-          const interactiveElements = collectInteractiveElements(node);
-          results.push({ frameId: node.id, frameName: node.name, imageBytes: Array.from(bytes), interactiveElements, frameWidth: node.width, frameHeight: node.height });
-          for (const el of interactiveElements) {
-            if (el.destinationId && !visited.has(el.destinationId)) queue.push(el.destinationId);
-          }
-        }
-        return results;
-      },
-      { startNodeId: selectedFlow }
-    );
+    const exportedSteps = await figmaAPI.run(exportFlowSteps, { startNodeId: selectedFlow });
 
-    const elemDestMap: Record<string, string> = {};
-    exportedSteps.forEach((s: any) => {
-      s.interactiveElements.forEach((el: any) => {
-        if (el.destinationId) {
-          const dest = exportedSteps.find((f: any) => f.frameId === el.destinationId);
-          if (dest) elemDestMap[`${s.frameId}::${el.name}`] = dest.frameName;
-        }
-      });
-    });
+    const elemDestMap = buildElementDestinationMap(exportedSteps);
 
     const accumulated: BatchResult[] = [];
 
