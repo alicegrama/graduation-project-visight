@@ -5,6 +5,26 @@ import { useState, useEffect, useRef } from "react";
 import html2canvas from "html2canvas";
 
 const SERVER_URL = "http://127.0.0.1:5001";
+const TRANSFORM_CONCURRENCY = 4;
+
+// Runs `fn` over `items` with at most `limit` in flight at once, preserving
+// result order (index-addressed) regardless of completion order.
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < items.length) {
+      const current = nextIndex++;
+      results[current] = await fn(items[current], current);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
 
 const CONDITIONS = [
   { value: "deuteranopia", label: "Deuteranopia (red-green)" },
@@ -632,39 +652,49 @@ export default function Plugin() {
       setLoadingProgress(0);
       setLoadingTotal(exportedSteps.length);
 
-      const stepsWithTransformed: any[] = [];
-      const previews: { frameName: string; transformedUrl: string }[] = [];
+      let stepsWithTransformed: any[] = [];
+      let previews: { frameName: string; transformedUrl: string }[] = [];
 
-      for (let i = 0; i < exportedSteps.length; i++) {
-        const step = exportedSteps[i];
-        setLoadingProgress(i + 1);
-        try {
-          const blob = new Blob([new Uint8Array(step.imageBytes)], { type: "image/png" });
-          const formData = new FormData();
-          formData.append("image", blob, `${step.frameName}.png`);
-          formData.append("condition", cond);
-          formData.append("severity", severity.toString());
-          const res = await fetch(`${SERVER_URL}/transform`, { method: "POST", body: formData });
-          if (!res.ok) throw new Error(`Server error: ${res.status}`);
-          const transformedBlob = await res.blob();
-          const transformedBase64 = await new Promise<string>((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve((reader.result as string).split(",")[1]);
-            reader.readAsDataURL(transformedBlob);
-          });
-          const elementsWithPositions = step.interactiveElements.map((el: any) => ({
-            index: el.index,
-            name: el.name,
-            position: getPositionLabel(el.x, el.y, step.frameWidth, step.frameHeight),
-            destinationId: el.destinationId,
-          }));
-          stepsWithTransformed.push({ frameId: step.frameId, frameName: step.frameName, transformedImageBase64: transformedBase64, interactiveElements: elementsWithPositions });
-          previews.push({ frameName: step.frameName, transformedUrl: `data:image/png;base64,${transformedBase64}` });
-        } catch (err) {
-          setStatus(`Error transforming ${step.frameName} for ${condLabel}: ${err}. Is the Python server running?`);
-          setIsLoading(false);
-          return;
-        }
+      try {
+        let completedCount = 0;
+        const transformed = await mapWithConcurrency(exportedSteps, TRANSFORM_CONCURRENCY, async (step: any) => {
+          try {
+            const blob = new Blob([new Uint8Array(step.imageBytes)], { type: "image/png" });
+            const formData = new FormData();
+            formData.append("image", blob, `${step.frameName}.png`);
+            formData.append("condition", cond);
+            formData.append("severity", severity.toString());
+            const res = await fetch(`${SERVER_URL}/transform`, { method: "POST", body: formData });
+            if (!res.ok) throw new Error(`Server error: ${res.status}`);
+            const transformedBlob = await res.blob();
+            const transformedBase64 = await new Promise<string>((resolve) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve((reader.result as string).split(",")[1]);
+              reader.readAsDataURL(transformedBlob);
+            });
+            const elementsWithPositions = step.interactiveElements.map((el: any) => ({
+              index: el.index,
+              name: el.name,
+              position: getPositionLabel(el.x, el.y, step.frameWidth, step.frameHeight),
+              destinationId: el.destinationId,
+            }));
+            return {
+              stepWithTransformed: { frameId: step.frameId, frameName: step.frameName, transformedImageBase64: transformedBase64, interactiveElements: elementsWithPositions },
+              preview: { frameName: step.frameName, transformedUrl: `data:image/png;base64,${transformedBase64}` },
+            };
+          } catch (err) {
+            throw new Error(`${step.frameName}: ${err}`);
+          } finally {
+            completedCount++;
+            setLoadingProgress(completedCount);
+          }
+        });
+        stepsWithTransformed = transformed.map(t => t.stepWithTransformed);
+        previews = transformed.map(t => t.preview);
+      } catch (err) {
+        setStatus(`Error transforming for ${condLabel}: ${err}. Is the Python server running?`);
+        setIsLoading(false);
+        return;
       }
 
       setLoadingStep(`[${ci + 1}/${selectedConditions.length}] Simulating: ${condLabel}`);
