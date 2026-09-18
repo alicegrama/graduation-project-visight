@@ -30,6 +30,7 @@ type Flow = { name: string; startNodeId: string };
 
 type SessionStep = {
   step: number;
+  frameId: string;
   frameName: string;
   choice: string;
   reasoning: string;
@@ -503,7 +504,7 @@ export default function Plugin() {
       s.interactiveElements.forEach((el: any) => {
         if (el.destinationId) {
           const dest = exportedSteps.find((f: any) => f.frameId === el.destinationId);
-          if (dest) elemDestMap[el.name] = dest.frameName;
+          if (dest) elemDestMap[`${s.frameId}::${el.name}`] = dest.frameName;
         }
       });
     });
@@ -661,7 +662,7 @@ export default function Plugin() {
       s.interactiveElements.forEach((el: any) => {
         if (el.destinationId) {
           const dest = exportedSteps.find((f: any) => f.frameId === el.destinationId);
-          if (dest) elemDestMap[el.name] = dest.frameName;
+          if (dest) elemDestMap[`${s.frameId}::${el.name}`] = dest.frameName;
         }
       });
     });
@@ -1252,7 +1253,7 @@ export default function Plugin() {
                             <div style={s.stepChoice}>→ {step.choice}</div>
 
                             {step.outcome === "completed" && (() => {
-                              const destFrameName = elementDestinationMap[step.choice];
+                              const destFrameName = elementDestinationMap[`${step.frameId}::${step.choice}`];
                               const destinationPreview = destFrameName
                                 ? transformedPreviews.find(p => p.frameName === destFrameName)
                                 : null;
