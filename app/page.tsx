@@ -334,7 +334,7 @@ const s: Record<string, React.CSSProperties> = {
 // Runs inside the Figma sandbox via figmaAPI.run() (see lib/figmaAPI.ts) — it is
 // stringified and eval'd there, so it cannot reference anything outside itself
 // besides `figma` and the passed params.
-async function exportFlowSteps(figma: any, { startNodeId }: { startNodeId: string }) {
+const exportFlowSteps = async (figma: any, { startNodeId }: { startNodeId: string }) => {
   const results: any[] = [];
   const visited = new Set<string>();
   const queue: string[] = [startNodeId];
@@ -396,7 +396,7 @@ async function exportFlowSteps(figma: any, { startNodeId }: { startNodeId: strin
   }
 
   return results;
-}
+};
 
 // Builds a `${originFrameId}::${elementName}` -> destinationFrameName map for
 // client-side "Arrived at" lookups (see the read site in the trace view below).
