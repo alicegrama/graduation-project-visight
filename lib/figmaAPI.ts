@@ -78,14 +78,29 @@ class FigmaAPI {
         pluginId: "*",
       };
 
-      ["https://www.figma.com", "https://staging.figma.com"].forEach(
-        (origin) => {
-          try {
-            parent.postMessage(msg, origin);
-          } catch {}
-        },
-      );
+      this.broadcast(msg);
     });
+  }
+
+  /**
+   * Resize the plugin window. Intended to be called as the user drags a
+   * resize handle rendered in the iframe.
+   */
+  resize(width: number, height: number): void {
+    this.broadcast({
+      pluginMessage: { type: "RESIZE", width, height },
+      pluginId: "*",
+    });
+  }
+
+  private broadcast(msg: unknown): void {
+    ["https://www.figma.com", "https://staging.figma.com"].forEach(
+      (origin) => {
+        try {
+          parent.postMessage(msg, origin);
+        } catch {}
+      },
+    );
   }
 }
 

@@ -5,6 +5,9 @@ figma.showUI(`<script>window.location.href = '${SITE_URL}'</script>`, {
   height: 700,
 });
 
+const MIN_HEIGHT = 300;
+const MAX_HEIGHT = 2400;
+
 figma.ui.onmessage = async (message, props) => {
   if (props.origin !== SITE_URL) {
     return;
@@ -34,6 +37,12 @@ figma.ui.onmessage = async (message, props) => {
         });
       }
 
+      break;
+    }
+
+    case "RESIZE": {
+      const height = Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, message.height));
+      figma.ui.resize(message.width, height);
       break;
     }
   }

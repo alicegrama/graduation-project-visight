@@ -453,6 +453,7 @@ export default function Plugin() {
     transformedUrl: string;
   }[]>([]);
   const resultRef = useRef<HTMLDivElement>(null);
+  const resizeStartRef = useRef<{ startY: number; startHeight: number } | null>(null);
   const [configOpen, setConfigOpen] = useState(true);
   const [elementDestinationMap, setElementDestinationMap] = useState<Record<string, string>>({});
   const [batchMode, setBatchMode] = useState(false);
@@ -473,6 +474,24 @@ export default function Plugin() {
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
+  }, []);
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const drag = resizeStartRef.current;
+      if (!drag) return;
+      const newHeight = drag.startHeight + (event.clientY - drag.startY);
+      figmaAPI.resize(window.innerWidth, newHeight);
+    };
+    const handlePointerUp = () => {
+      resizeStartRef.current = null;
+    };
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
   }, []);
 
   const loadFlows = async () => {
@@ -1288,6 +1307,24 @@ export default function Plugin() {
           );
         })()}
       </div>
+
+      <div
+        onPointerDown={(e) => {
+          e.preventDefault();
+          (e.target as HTMLElement).setPointerCapture(e.pointerId);
+          resizeStartRef.current = { startY: e.clientY, startHeight: window.innerHeight };
+        }}
+        title="Drag to resize height"
+        style={{
+          position: "fixed",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: "8px",
+          cursor: "ns-resize",
+          touchAction: "none",
+        }}
+      />
     </div>
   );
 }
