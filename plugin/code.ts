@@ -42,6 +42,7 @@ figma.ui.onmessage = async (message, props) => {
 
     case "RESIZE": {
       const height = Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, message.height));
+      console.log("[plugin] RESIZE received", message.width, height);
       figma.ui.resize(message.width, height);
       break;
     }

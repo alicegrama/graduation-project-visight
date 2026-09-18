@@ -481,6 +481,7 @@ export default function Plugin() {
       const drag = resizeStartRef.current;
       if (!drag) return;
       const newHeight = drag.startHeight + (event.clientY - drag.startY);
+      console.log("[resize] pointermove, requesting height", newHeight);
       figmaAPI.resize(window.innerWidth, newHeight);
     };
     const handlePointerUp = () => {
@@ -1313,6 +1314,7 @@ export default function Plugin() {
           e.preventDefault();
           (e.target as HTMLElement).setPointerCapture(e.pointerId);
           resizeStartRef.current = { startY: e.clientY, startHeight: window.innerHeight };
+          console.log("[resize] pointerdown, startHeight", window.innerHeight);
         }}
         title="Drag to resize height"
         style={{
